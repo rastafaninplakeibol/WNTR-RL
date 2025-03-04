@@ -81,6 +81,9 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         logger.info('{0:<10}{1:<10}{2:<10}{3:<15}{4:<15}'.format('Sim Time', 'Trial', 'Solver', '# isolated', '# isolated'))
         logger.info('{0:<10}{1:<10}{2:<10}{3:<15}{4:<15}'.format('', '', '# iter', 'junctions', 'links'))
 
+    def hydraulic_timestep(self):
+        return self._hydraulic_timestep
+
     def step_sim(self):
         if not self.initialized_simulation:
             raise RuntimeError('Simulation not initialized. Call init_simulation() before running the simulation.')
@@ -128,7 +131,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
             self.results.error_code = mwntr.sim.results.ResultsStatus.error
             self.diagnostics.run(last_step='solve', next_step='break')
             self._terminated = True
-            self.get_results(self._wn, self.results, self.node_res, self.link_res)
+            self.get_results()
             return
 
         logger.info('{0:<10}{1:<10}{2:<10}{3:<15}{4:<15}'.format(self._get_time(), self.trial, iter_count, num_isolated_junctions, num_isolated_links))

@@ -10,22 +10,32 @@ from mwntr.sim.interactive_network_simulator import MWNTRInteractiveSimulator
 def plot_results(results: mwntr.sim.results.SimulationResults, scheduling=None):
     #take only pressure of H1, H2 and H3
     #pressure = results.node['pressure'][['H1', 'H2', 'H3']]
-    pressure = results.node['pressure']
 
+    import plotly.express as px
+
+    key = 'pressure'
+
+    pressure = results.node[key]
     num_series = len(pressure.columns)
     cmap = plt.colormaps.get_cmap('tab20')
-    color_list = [cmap(i) for i in range(num_series)]
-    pressure.plot(title='Pressure at Nodes Over Time', figsize=(10, 6), color=color_list)
 
+    color_list = [cmap(i % 20) for i in range(num_series)]
+    fig = px.line(pressure, x=pressure.index, y=pressure.columns, title=f'{key.capitalize()} at nodes over time')
+
+
+    
     if scheduling:
         for time, action, args in scheduling:
-            #use a random color for each action
-            color = plt.cm.tab20(hash(f'{action.__name__}({args})') % len(scheduling))
-            plt.axvline(x=time, color=color, linestyle='--', label=f'{action.__name__}({args})')
+            #use a random hex color
+            color = '#'+str(hex(hash(action.__name__+str(args)) % 16777215)[2:].zfill(6))
 
-    plt.ylabel('Pressure (m)')
-    plt.legend()
-    plt.show()
+            fig.add_vline(x=time, line_dash='dash', line_color=color, annotation_text=f'{action.__name__}({args})')
+            #plt.axvline(x=time, color=color, linestyle='--', label=f'{action.__name__}({args})')
+
+    fig.show()
+    #plt.ylabel('Pressure (m)')
+    #plt.legend()
+    #plt.show()
 
 def create_water_network_model():
     # 1. Create a new water network model
@@ -33,7 +43,7 @@ def create_water_network_model():
 
     # --- Simulation options ---
     wn.options.time.duration = 86400 * 2       # 2 days
-    wn.options.time.hydraulic_timestep = 2     # 2 seconds per step (just an example)
+    wn.options.time.hydraulic_timestep = 60     # 2 seconds per step (just an example)
     wn.options.time.report_timestep = 60       # report every 60 seconds
     wn.options.time.pattern_timestep = 3600    # 1 hour per pattern step
     wn.options.hydraulic.demand_model = 'PDD'
@@ -93,7 +103,8 @@ def create_water_network_model():
 
     return wn
 
-wn = mwntr.network.WaterNetworkModel('NET_2.inp')
+#wn = mwntr.network.WaterNetworkModel('NET_2.inp')
+wn = create_water_network_model()
 
 sim = MWNTRInteractiveSimulator(wn)
 sim.init_simulation()
@@ -102,14 +113,7 @@ sim.plot_network(link_labels=True, node_labels=True, show_plot=True)
 
 
 scheduling = [
-    #(20000, sim.start_leak, 'J3'),
-    #(21000, sim.start_leak, 'J2'),
-    #(40000, sim.open_pipe, 'PR1'),
-    #(40000, sim.open_pipe, 'PR7'),
-    #(40000, sim.open_pipe, 'PR6'),
-    #(40000, sim.open_pipe, 'PR4'),
-    #(50000, sim.stop_leak, 'J3'),
-    #(51000, sim.stop_leak, 'J2'),
+    (sim.hydraulic_timestep()*1000, sim.start_leak, ('J7', 0.01)),
 ]
 
 while not sim.is_terminated():
@@ -117,7 +121,9 @@ while not sim.is_terminated():
 
     for time, action, args in scheduling:
         if current_time == time:
-            action(args)
+            action(*args)
+
+    
             
     sim.step_sim()
 

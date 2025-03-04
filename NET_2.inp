@@ -2027,7 +2027,7 @@ LINK ~@Pump-1  CLOSED  IF NODE T-2         ABOVE  146.016
 ;Tank            	Model
 
 [TIMES]
- Duration           	600:00 
+ Duration           	60:00 
  Hydraulic Timestep 	1:00 
  Quality Timestep   	0:05 
  Pattern Timestep   	1:00 
