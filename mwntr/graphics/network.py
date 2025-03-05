@@ -255,8 +255,8 @@ def plot_network(wn, node_attribute=None, link_attribute=None, title=None,
     return ax
 
 def plot_interactive_network(wn, node_attribute=None, node_attribute_name = 'Value', title=None,
-               node_size=8, node_range=[None,None], node_cmap='Jet', node_labels=True,
-               link_width=1, add_colorbar=True, reverse_colormap=False,
+               node_size=12, node_range=[None,None], node_cmap='Jet', node_labels=True,
+               link_width=2, add_colorbar=True, reverse_colormap=False,
                figsize=None, round_ndigits=2, add_to_node_popup=None, 
                filename='plotly_network.html', auto_open=True):
     """
@@ -333,8 +333,28 @@ def plot_interactive_network(wn, node_attribute=None, node_attribute_name = 'Val
     else:
         add_colorbar = False
         
+
+
+    edge_traces = []
     # Create edge trace
-    edge_trace = plotly.graph_objs.Scatter(
+    
+    edge_colors = {
+        "Pipe": '#888',
+        "Pump": 'red',
+        "Valve": 'green'
+    }
+
+    annotations = []
+    edges = G.edges()
+    for edge in G.edges():
+        edge_type = list(edges._adjdict[edge[0]][edge[1]].values())[0]['type']
+        start_node = G.nodes[edge[0]]
+        end_node = G.nodes[edge[1]]
+
+        x0, y0 = start_node['pos']
+        x1, y1 = end_node['pos']
+
+        edge_trace = plotly.graph_objs.Scatter(
         x=[], 
         y=[], 
         text=[],
@@ -343,29 +363,25 @@ def plot_interactive_network(wn, node_attribute=None, node_attribute_name = 'Val
         line=dict(
             #colorscale=link_cmap,
             #reversescale=reverse_colormap,
-            color='#888', #[], 
+            color=edge_colors[edge_type], #[], 
             width=link_width))
-    
-    annotations = []
-    for edge in G.edges():
-        x0, y0 = G.nodes[edge[0]]['pos']
-        x1, y1 = G.nodes[edge[1]]['pos']
+        
         edge_trace['x'] += tuple([x0, x1, None])
         edge_trace['y'] += tuple([y0, y1, None])
 
-        mx, my = (x0 + x1)/2, (y0 + y1)/2
-    
+        mx, my = (x0 + x1)/2, (y0 + y1)/2    
         link_name = list(G[edge[0]][edge[1]].keys())[0]
-        label = link_name
         
         annotations.append(
             dict(
                 x=mx, y=my,
                 xref='x', yref='y',
-                text=label,
-                showarrow=False
+                text=link_name,
+                showarrow=False,
+                bgcolor='#e5ecf6'
             )
         )
+        edge_traces.append(edge_trace)
 
         #try:
         #    # Add link attributes
@@ -397,13 +413,22 @@ def plot_interactive_network(wn, node_attribute=None, node_attribute_name = 'Val
                 thickness=15,
                 xanchor='left'),
             line=dict(width=1)))
+
+    node_colors = {
+        'Reservoir': "blue",
+        'Tank': "green",
+        'Junction': "#555"
+    }
+
     for node in G.nodes():
-        x, y = G.nodes[node]['pos']
+        node_elem = G.nodes[node]
+        x, y = node_elem['pos']
         node_trace['x'] += tuple([x])
         node_trace['y'] += tuple([y])
         try:
             # Add node attributes
-            node_trace['marker']['color'] += tuple([node_attribute[node]])
+            node_trace['marker']['color'] += tuple([node_colors[node_elem["type"]]])
+            #node_trace['marker']['color'] += tuple([node_attribute[node]])
             #node_trace['marker']['size'].append(node_size)
 
             # Add node labels
@@ -427,7 +452,8 @@ def plot_interactive_network(wn, node_attribute=None, node_attribute_name = 'Val
     #node_trace['marker']['colorbar']['title'] = 'Node colorbar title'
     
     # Create figure
-    data = [edge_trace, node_trace]
+    data = [node_trace]
+    data.extend(edge_traces)
 
     autosize = False
     width = None
