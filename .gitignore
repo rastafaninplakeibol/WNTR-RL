@@ -8,3 +8,4 @@ share
 pyvenv.cfg
 etc
 plotly_network.html
+test.py

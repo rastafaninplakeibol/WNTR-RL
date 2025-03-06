@@ -75,6 +75,8 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         self.initialized_simulation = True
 
         self.last_set_results_time = -1
+        
+        self._wn.add_pattern('interactive_pattern', [0.1]*24)
 
         logger.debug('starting simulation')
 
@@ -283,3 +285,24 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         
     def plot_network(self, title='Water Network', node_labels=False, link_labels=False, show_plot=False):
         mwntr.graphics.plot_interactive_network(self._wn, title=title, node_labels=node_labels)
+
+
+    def add_demand(self, node_name, base_demand, category=None):
+        node = self._wn.get_node(node_name)
+        node._pattern_reg.add_usage('interactive_pattern', (node.name, 'Junction'))
+        node.demand_timeseries_list.append((base_demand, 'interactive_pattern', category))
+
+    def remove_demand(self, node_name):
+        node = self._wn.get_node(node_name)
+        node._pattern_reg.remove_usage('interactive_pattern', (node.name, 'Junction'))
+        base = node.demand_timeseries_list.pop(0)
+        node.demand_timeseries_list.clear()
+        node.demand_timeseries_list.append(base)
+
+    def toggle_demand(self, node_name, base_demand=0.0, category=None):
+        node = self._wn.get_node(node_name)
+        if len(node.demand_timeseries_list) == 1:
+            self.add_demand(node_name, base_demand, category)
+        else:
+            self.remove_demand(node_name)
+        
