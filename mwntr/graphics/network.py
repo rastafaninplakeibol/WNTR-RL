@@ -443,7 +443,7 @@ def plot_interactive_network(wn, node_attribute=None, node_attribute_name = 'Val
                             
                 node_trace['text'] += tuple([node_info])
         except:
-            node_trace['marker']['color'] += tuple(['#888'])
+            node_trace['marker']['color'] += tuple(['#555'])
             if node_labels:
                 node_info = wn.get_node(node).node_type + ': ' + str(node)
                 

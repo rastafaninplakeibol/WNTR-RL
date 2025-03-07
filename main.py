@@ -1,5 +1,6 @@
 from calendar import c
 from turtle import color
+from uuid import UUID
 import mwntr
 import matplotlib.pyplot as plt
 import mwntr.sim.results
@@ -7,39 +8,19 @@ import mwntr.sim.results
 from mwntr.network.elements import Junction, Pipe, Reservoir, Valve
 from mwntr.sim.interactive_network_simulator import MWNTRInteractiveSimulator
 
-def plot_results(results: mwntr.sim.results.SimulationResults, scheduling=None):
-    #take only pressure of H1, H2 and H3
-    #pressure = results.node['pressure'][['H1', 'H2', 'H3']]
 
-    import plotly.express as px
-    key = 'demand'
-
-    pressure = results.node[key]
-    num_series = len(pressure.columns)
-    cmap = plt.colormaps.get_cmap('tab20')
-
-    #color_list = [cmap(i % 20) for i in range(num_series)]
-    if len(pressure) == 0:
-        print('No results to plot')
-        return
-    fig = px.line(pressure, x=pressure.index, y=pressure.columns, title=f'{key.capitalize()} at nodes over time')
-
-    if scheduling:
-        for time, action, args in scheduling:
-            color = '#'+str(hex(hash(action.__name__+str(args)) % 16777215)[2:].zfill(6))
-            fig.add_vline(x=time, line_dash='dash', line_color=color, annotation_text='  ', annotation_hovertext=f'{action.__name__}({args})')
-            
-    fig.show()
 
 def create_water_network_model():
     # 1. Create a new water network model
     wn = mwntr.network.WaterNetworkModel()
 
     # --- Simulation options ---
-    wn.options.time.duration = 86400 * 10       # 2 days
-    wn.options.time.hydraulic_timestep = 60     
-    wn.options.time.report_timestep = 60       
-    wn.options.time.pattern_timestep = 3600    
+    wn.options.time.duration = 86400 * 1     # 10 days
+    wn.options.time.hydraulic_timestep = 720
+    wn.options.time.pattern_timestep = 720 
+    wn.options.time.rule_timestep = 720
+    wn.options.time.report_timestep = 720
+    wn.options.time.quality_timestep = 720   
     wn.options.hydraulic.demand_model = 'PDD'
 
     # -------------------------------
@@ -101,7 +82,7 @@ def create_water_network_model():
 
     # For H2, remove the existing pipe and add a valve instead:
     #wn.add_pipe('PH2', 'J3', 'H2', length=20, diameter=0.3, roughness=100, minor_loss=0)
-    wn.add_valve('Valve1', 'J3', 'H2')
+    wn.add_valve('Valve1', 'J3', 'H2', diameter=0.3, valve_type="PSV", initial_setting=1.0)
 
     return wn
 
@@ -113,25 +94,46 @@ sim.init_simulation()
 
 sim.plot_network(link_labels=True, node_labels=True, show_plot=True)
 
-scheduling = [
-    #(sim.hydraulic_timestep()*1000, sim.start_leak, ('J7', 0.01)),
-    (sim.hydraulic_timestep()*1000, sim.toggle_demand, ('H1', 1)),
-    (sim.hydraulic_timestep()*2000, sim.toggle_demand, ('H1',)),
-    (sim.hydraulic_timestep()*3000, sim.toggle_demand, ('H1', 10)),
-    (sim.hydraulic_timestep()*4000, sim.toggle_demand, ('H1',)),
-    (sim.hydraulic_timestep()*5000, sim.toggle_demand, ('H1', 100)),
-]
+branched_sim_1 = None
+branched_sim_2 = None
 
+sims = [sim]
 while not sim.is_terminated():
+    #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
+
     current_time = sim.get_sim_time()
 
-    for time, action, args in scheduling:
-        if current_time == time:
-            action(*args)
-
+    if current_time == sim.hydraulic_timestep() * 4:
+        sim.toggle_demand('H1', 1.0)
     
-            
-    sim.step_sim()
+    elif current_time == sim.hydraulic_timestep() * 8:
+        sim.toggle_demand('H1')
 
-# Plot final results
-plot_results(sim.get_results(), scheduling=scheduling)
+    elif current_time == sim.hydraulic_timestep() * 13:
+        sim.toggle_demand('H1', 1.0)
+
+    elif current_time == sim.hydraulic_timestep() * 27:
+        sim.toggle_demand('H1')
+
+    elif current_time == sim.hydraulic_timestep() * 33:
+        sim.start_leak('J1', 0.01)
+
+    elif current_time == sim.hydraulic_timestep() * 37:
+        branched_sim_1 = sim.branch()
+        branched_sim_2 = sim.branch()
+        sims.append(branched_sim_1)
+        sims.append(branched_sim_2)
+
+    elif current_time == sim.hydraulic_timestep() * 57:
+        branched_sim_1.stop_leak('J1')
+        branched_sim_2.close_pipe('PR0')
+        branched_sim_2.close_pipe('PR1')
+    
+    elif current_time == sim.hydraulic_timestep() * 87:
+        branched_sim_2.stop_leak('J1')
+
+    for s in sims:
+        s.step_sim()
+
+for s in sims:
+    s.plot_results('node','pressure')
