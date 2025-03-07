@@ -15,12 +15,12 @@ def create_water_network_model():
     wn = mwntr.network.WaterNetworkModel()
 
     # --- Simulation options ---
-    wn.options.time.duration = 86400 * 1     # 10 days
-    wn.options.time.hydraulic_timestep = 720
-    wn.options.time.pattern_timestep = 720 
-    wn.options.time.rule_timestep = 720
-    wn.options.time.report_timestep = 720
-    wn.options.time.quality_timestep = 720   
+    wn.options.time.duration = 86400 / 24     # 10 days
+    wn.options.time.hydraulic_timestep = 30
+    wn.options.time.pattern_timestep = 30 
+    wn.options.time.rule_timestep = 30
+    wn.options.time.report_timestep = 30
+    wn.options.time.quality_timestep = 30   
     wn.options.hydraulic.demand_model = 'PDD'
 
     # -------------------------------
@@ -98,38 +98,38 @@ branched_sim_1 = None
 branched_sim_2 = None
 
 sims = [sim]
+
 while not sim.is_terminated():
     #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
-
     current_time = sim.get_sim_time()
 
-    if current_time == sim.hydraulic_timestep() * 4:
+    if current_time == sim.hydraulic_timestep() * 10:
         sim.toggle_demand('H1', 1.0)
     
-    elif current_time == sim.hydraulic_timestep() * 8:
+    elif current_time == sim.hydraulic_timestep() * 20:
         sim.toggle_demand('H1')
 
-    elif current_time == sim.hydraulic_timestep() * 13:
+    elif current_time == sim.hydraulic_timestep() * 30:
         sim.toggle_demand('H1', 1.0)
 
-    elif current_time == sim.hydraulic_timestep() * 27:
+    elif current_time == sim.hydraulic_timestep() * 40:
         sim.toggle_demand('H1')
 
-    elif current_time == sim.hydraulic_timestep() * 33:
+    elif current_time == sim.hydraulic_timestep() * 50:
         sim.start_leak('J1', 0.01)
 
-    elif current_time == sim.hydraulic_timestep() * 37:
+    elif current_time == sim.hydraulic_timestep() * 60:
         branched_sim_1 = sim.branch()
         branched_sim_2 = sim.branch()
         sims.append(branched_sim_1)
         sims.append(branched_sim_2)
 
-    elif current_time == sim.hydraulic_timestep() * 57:
+    elif current_time == sim.hydraulic_timestep() * 70:
         branched_sim_1.stop_leak('J1')
         branched_sim_2.close_pipe('PR0')
         branched_sim_2.close_pipe('PR1')
     
-    elif current_time == sim.hydraulic_timestep() * 87:
+    elif current_time == sim.hydraulic_timestep() * 80:
         branched_sim_2.stop_leak('J1')
 
     for s in sims:

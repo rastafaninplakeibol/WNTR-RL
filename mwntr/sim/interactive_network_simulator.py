@@ -83,6 +83,9 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         
         self._wn.add_pattern('interactive_pattern', [0.1]*24)
 
+        self.modified_leakage = False
+        self.demand_modifications = []
+
         logger.debug('starting simulation')
 
         logger.info('{0:<10}{1:<10}{2:<10}{3:<15}{4:<15}'.format('Sim Time', 'Trial', 'Solver', '# isolated', '# isolated'))
@@ -103,9 +106,6 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         else:
             first_step = False
 
-        self._wn.sim_time += self._hydraulic_timestep
-        overstep = float(self._wn.sim_time) % self._hydraulic_timestep
-        self._wn.sim_time -= overstep
 
         if not self.resolve:
             if not first_step:
@@ -198,14 +198,23 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         mwntr.sim.hydraulics.update_network_previous_values(self._wn)
         first_step = False
         
+        self._wn.sim_time += self._hydraulic_timestep
+        #overstep = float(self._wn.sim_time) % self._hydraulic_timestep
+        #self._wn.sim_time -= overstep
+
+        if self.modified_leakage:
+            self._model, self._model_updater = mwntr.sim.hydraulics.create_hydraulic_model(wn=self._wn, HW_approx=self._hw_approx)
+            self.modified_leakage = False
+        
+        self._apply_demand_modifications()
 
         if self._wn.sim_time > self._wn.options.time.duration:
             self._terminated = True
-        #self._set_results(self._wn, self.results, self.node_res, self.link_res)
         return
         
     def full_run_sim(self):
         self.results = self.run_sim()
+        self.last_set_results_time = self._wn.sim_time
         return
     
     def is_terminated(self):
@@ -253,19 +262,17 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         junction._leak = True
         junction._leak_area = leak_area
         junction._leak_discharge_coeff = leak_discharge_coefficient
-        self.update_wn_model()
+
+        self.modified_leakage = True
         
-
-    def update_wn_model(self):
-        self._model, self._model_updater = mwntr.sim.hydraulics.create_hydraulic_model(wn=self._wn, HW_approx=self._hw_approx)
-
     def stop_leak(self, node_name):
         self.events_history.append((self.get_sim_time(), 'stop_leak', (node_name)))
 
         junction = self._wn.get_node(node_name)
         junction._leak_status = False
         junction._leak = False
-        self.update_wn_model()
+
+        self.modified_leakage = True
 
     def _add_control(self, control):
         if control.epanet_control_type in {_ControlType.presolve, _ControlType.pre_and_postsolve}:
@@ -283,7 +290,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         pipe = self._wn.get_link(pipe_name)
         c1 = mwntr.network.controls.ControlAction(pipe, "status", LinkStatus.Closed)
-        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time())
+        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
         c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
         self._add_control(c)
         self._register_controls_with_observers()
@@ -293,7 +300,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         pipe = self._wn.get_link(pipe_name)
         c1 = mwntr.network.controls.ControlAction(pipe, "status", LinkStatus.Open)
-        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time())
+        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
         c = mwntr.network.controls.Control(condition=condition, then_action=c1)
         self._add_control(c)
         self._register_controls_with_observers()
@@ -301,22 +308,29 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
     def plot_network(self, title='Water Network Map', node_labels=False, link_labels=False, show_plot=False):
         mwntr.graphics.plot_interactive_network(self._wn, title=f"{title} - {self._sim_id}", node_labels=node_labels)
 
-
     def add_demand(self, node_name, base_demand, category=None):
         self.events_history.append((self.get_sim_time(), 'add_demand', (node_name, base_demand, category)))
+        self.demand_modifications.append(('add', node_name, base_demand, category))
 
-        node = self._wn.get_node(node_name)
-        node._pattern_reg.add_usage('interactive_pattern', (node.name, 'Junction'))
-        node.demand_timeseries_list.append((base_demand, 'interactive_pattern', category))
+    def _apply_demand_modifications(self):
+        for action, *args in self.demand_modifications:
+            if action == 'add':
+                node_name, base_demand, category = args
+                node = self._wn.get_node(node_name)
+                node._pattern_reg.add_usage('interactive_pattern', (node.name, 'Junction'))
+                node.demand_timeseries_list.append((base_demand, 'interactive_pattern', category))
+            elif action == 'remove':
+                node_name = args[0]
+                node = self._wn.get_node(node_name)
+                node._pattern_reg.remove_usage('interactive_pattern', (node.name, 'Junction'))
+                base = node.demand_timeseries_list.pop(0)
+                node.demand_timeseries_list.clear()
+                node.demand_timeseries_list.append(base)
+        self.demand_modifications.clear()
 
     def remove_demand(self, node_name):
         self.events_history.append((self.get_sim_time(), 'remove_demand', (node_name)))
-        
-        node = self._wn.get_node(node_name)
-        node._pattern_reg.remove_usage('interactive_pattern', (node.name, 'Junction'))
-        base = node.demand_timeseries_list.pop(0)
-        node.demand_timeseries_list.clear()
-        node.demand_timeseries_list.append(base)
+        self.demand_modifications.append(('remove', node_name))
 
     def toggle_demand(self, node_name, base_demand=0.0, category=None):
         node = self._wn.get_node(node_name)
@@ -370,8 +384,6 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
             else:
                 setattr(result, key, deepcopy(value, memo))
         return result
-
-    
 
     def plot_results(self, nodeOrLink, key, node_list=None, show_events=True):
         """
