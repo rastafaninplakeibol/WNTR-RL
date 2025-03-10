@@ -15,7 +15,7 @@ def create_water_network_model():
     wn = mwntr.network.WaterNetworkModel()
 
     # --- Simulation options ---
-    wn.options.time.duration = 86400 / 24     # 10 days
+    wn.options.time.duration = 86400 / 12     # 10 days
     wn.options.time.hydraulic_timestep = 30
     wn.options.time.pattern_timestep = 30 
     wn.options.time.rule_timestep = 30
@@ -26,17 +26,18 @@ def create_water_network_model():
     # -------------------------------
     # Define demand patterns for houses
     # -------------------------------
-    pattern_house1 = [1.0]*8 + [2.0]*12 + [1.0]*4    
+    pattern_house1 = [1.0] + [2.0] + [3.0] + [4.0] + [5.0] + [6.0] + [1.0] + [2.0] + [3.0] + [4.0] + [5.0] + [6.0] + [1.0] + [2.0] + [3.0] + [4.0] + [5.0] + [6.0] + [1.0] + [2.0] + [3.0] + [4.0] + [5.0] + [6.0]  
     pattern_house2 = [0.5]*7 + [1.5]*4 + [0.5]*6 + [1.5]*4 + [0.5]*3  
     pattern_house3 = [2.5]*8 + [0.0]*12 + [2.5]*4    
 
-    pump_speed_pattern = [5.0]*24
+    pump_speed_pattern = [1.0]*24
 
     wn.add_pattern('house1_pattern', pattern_house1)
     wn.add_pattern('house2_pattern', pattern_house2)
     wn.add_pattern('house3_pattern', pattern_house3)
     
     wn.add_pattern('pump_speed_pattern', pump_speed_pattern)
+    wn.add_curve('pump_curve', 'HEAD', [(100,100)])
 
     # 2. Add a Reservoir (Tank1) on the left
     wn.add_reservoir('R1', base_head=500.0, head_pattern=None, coordinates=(-50, 50))
@@ -53,8 +54,8 @@ def create_water_network_model():
     wn.add_junction('J8', base_demand=0.0, elevation=10.0, demand_pattern=None, coordinates=(50, 50))
 
     # 4. Replace the reservoir connection with a pump:
-    wn.add_pipe('P_R1_J7', 'R1', 'J7', length=50, diameter=0.3, roughness=100, minor_loss=0)
-    #wn.add_pump('Pump1', 'R1', 'J7', pump_parameter=1000.0)
+    #wn.add_pipe('P_R1_J7', 'R1', 'J7', length=50, diameter=0.3, roughness=100, minor_loss=0)
+    wn.add_pump('P1', 'R1', 'J7', initial_status='OPEN', pump_type='HEAD', pump_parameter='pump_curve')
 
     # 5. Connect the 8 junctions in a loop (rectangle)
     wn.add_pipe('PR0', 'J0', 'J1', length=50, diameter=0.3, roughness=100, minor_loss=0)
@@ -82,7 +83,7 @@ def create_water_network_model():
 
     # For H2, remove the existing pipe and add a valve instead:
     #wn.add_pipe('PH2', 'J3', 'H2', length=20, diameter=0.3, roughness=100, minor_loss=0)
-    wn.add_valve('Valve1', 'J3', 'H2', diameter=0.3, valve_type="PSV", initial_setting=1.0)
+    wn.add_valve('V1', 'J3', 'H2', diameter=0.3, valve_type="FCV", initial_status='Active')
 
     return wn
 
@@ -92,7 +93,7 @@ wn = create_water_network_model()
 sim = MWNTRInteractiveSimulator(wn)
 sim.init_simulation()
 
-sim.plot_network(link_labels=True, node_labels=True, show_plot=True)
+#sim.plot_network(link_labels=True, node_labels=True, show_plot=True)
 
 branched_sim_1 = None
 branched_sim_2 = None
@@ -103,37 +104,48 @@ while not sim.is_terminated():
     #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
     current_time = sim.get_sim_time()
 
-    if current_time == sim.hydraulic_timestep() * 10:
-        sim.toggle_demand('H1', 1.0)
+    if current_time == sim.hydraulic_timestep() * 13:
+        sim.toggle_demand('H1', 1.0, name='house1_pattern')
     
-    elif current_time == sim.hydraulic_timestep() * 20:
-        sim.toggle_demand('H1')
+    elif current_time == sim.hydraulic_timestep() * 78:
+        sim.toggle_demand('H1', name='house1_pattern')
 
-    elif current_time == sim.hydraulic_timestep() * 30:
-        sim.toggle_demand('H1', 1.0)
+    elif current_time == sim.hydraulic_timestep() * 101:
+        sim.toggle_demand('H1', 1.0, name='house1_pattern')
 
-    elif current_time == sim.hydraulic_timestep() * 40:
-        sim.toggle_demand('H1')
+    elif current_time == sim.hydraulic_timestep() * 145:
+        sim.toggle_demand('H1', name='house1_pattern')
 
-    elif current_time == sim.hydraulic_timestep() * 50:
-        sim.start_leak('J1', 0.01)
+    elif current_time == sim.hydraulic_timestep() * 178:
+        sim.close_pump('P1')
 
-    elif current_time == sim.hydraulic_timestep() * 60:
-        branched_sim_1 = sim.branch()
-        branched_sim_2 = sim.branch()
-        sims.append(branched_sim_1)
-        sims.append(branched_sim_2)
+    elif current_time == sim.hydraulic_timestep() * 211:
+        sim.open_pump('P1')
 
-    elif current_time == sim.hydraulic_timestep() * 70:
-        branched_sim_1.stop_leak('J1')
-        branched_sim_2.close_pipe('PR0')
-        branched_sim_2.close_pipe('PR1')
+    #elif current_time == sim.hydraulic_timestep() * 60:
+    #    #branched_sim_1 = sim.branch()
+    #    branched_sim_2 = sim.branch()
+    #    #sims.append(branched_sim_1)
+    #    sims.append(branched_sim_2)
+
+    #elif current_time == sim.hydraulic_timestep() * 70:
+    #    #branched_sim_1.stop_leak('J1')
+    #    #branched_sim_2.close_pipe('PR0')
+    #    #branched_sim_2.close_pipe('PR1')
+    #    branched_sim_2.close_valve('V1')
     
-    elif current_time == sim.hydraulic_timestep() * 80:
-        branched_sim_2.stop_leak('J1')
+        
+    
+    #elif current_time == sim.hydraulic_timestep() * 80:
+    #    branched_sim_2.stop_leak('J1')
 
     for s in sims:
         s.step_sim()
 
-for s in sims:
-    s.plot_results('node','pressure')
+#for s in sims:
+#    s.plot_results('node','pressure')
+
+#branched_sim_1.plot_results('node','pressure', ['H1', 'H2', 'H3'])
+sim.plot_results('node','demand', ['R1', 'H1', 'H2', 'H3'])
+sim.plot_results('node','expected_demand', ['R1', 'H1', 'H2', 'H3'])
+sim.plot_results('node','satisfacted_demand', ['R1', 'H1', 'H2', 'H3'])

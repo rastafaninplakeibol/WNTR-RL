@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import mwntr
 from mwntr.network.controls import _ControlType
+from mwntr.network.elements import PSValve
 import mwntr.sim.hydraulics
 from mwntr.sim.solvers import NewtonSolver
 import mwntr.sim.results
@@ -14,6 +15,8 @@ from mwntr.network.base import LinkStatus
 from mwntr.network.model import WaterNetworkModel
 from copy import deepcopy
 import plotly.express as px
+from mwntr.network.controls import ControlPriority, _InternalControlAction
+
 
 
 from mwntr.sim.core import _Diagnostics, _ValveSourceChecker, _solver_helper
@@ -28,6 +31,9 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         self.initialized_simulation = False
         self._sim_id = f"{uuid4()}"
         self.events_history = []
+
+    def hydraulic_timestep(self):
+        return self._hydraulic_timestep
 
     def init_simulation(self, solver=None, backup_solver=None, solver_options=None, backup_solver_options=None, convergence_error=False, HW_approx='default', diagnostics=False):
         logger.debug('creating hydraulic model')
@@ -83,7 +89,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         
         self._wn.add_pattern('interactive_pattern', [0.1]*24)
 
-        self.modified_leakage = False
+        self.rebuild_hydraulic_model = False
         self.demand_modifications = []
 
         logger.debug('starting simulation')
@@ -91,8 +97,19 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         logger.info('{0:<10}{1:<10}{2:<10}{3:<15}{4:<15}'.format('Sim Time', 'Trial', 'Solver', '# isolated', '# isolated'))
         logger.info('{0:<10}{1:<10}{2:<10}{3:<15}{4:<15}'.format('', '', '# iter', 'junctions', 'links'))
 
-    def hydraulic_timestep(self):
-        return self._hydraulic_timestep
+    def save_expected_demand(self):
+        expected_demand = self._model.expected_demand
+        for node_name, demand in expected_demand.items():
+            v = demand.value
+            self.node_res['expected_demand'][node_name].append(v)
+            if v == 0:
+                self.node_res['satisfacted_demand'][node_name].append(1)
+            else:
+                self.node_res['satisfacted_demand'][node_name].append(self.node_res['demand'][node_name][-1] / v)
+        
+        for node_name, node in self._wn.reservoirs():
+            self.node_res['expected_demand'][node_name].append(0.0)
+            self.node_res['satisfacted_demand'][node_name].append(0.0)
 
     def step_sim(self):
         if not self.initialized_simulation:
@@ -105,7 +122,6 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
             first_step = True
         else:
             first_step = False
-
 
         if not self.resolve:
             if not first_step:
@@ -196,17 +212,19 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
                 raise RuntimeError('Simulation already solved this timestep')
             self.results.time.append(int(self._wn.sim_time))
         mwntr.sim.hydraulics.update_network_previous_values(self._wn)
-        first_step = False
         
         self._wn.sim_time += self._hydraulic_timestep
         #overstep = float(self._wn.sim_time) % self._hydraulic_timestep
         #self._wn.sim_time -= overstep
 
-        if self.modified_leakage:
+        self.save_expected_demand()
+
+        if self.rebuild_hydraulic_model:
             self._model, self._model_updater = mwntr.sim.hydraulics.create_hydraulic_model(wn=self._wn, HW_approx=self._hw_approx)
-            self.modified_leakage = False
+            self.rebuild_hydraulic_model = False
         
-        self._apply_demand_modifications()
+        if len(self.demand_modifications) > 0:
+            self._apply_demand_modifications()
 
         if self._wn.sim_time > self._wn.options.time.duration:
             self._terminated = True
@@ -262,8 +280,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         junction._leak = True
         junction._leak_area = leak_area
         junction._leak_discharge_coeff = leak_discharge_coefficient
-
-        self.modified_leakage = True
+        self.rebuild_hydraulic_model = True
         
     def stop_leak(self, node_name):
         self.events_history.append((self.get_sim_time(), 'stop_leak', (node_name)))
@@ -271,8 +288,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         junction = self._wn.get_node(node_name)
         junction._leak_status = False
         junction._leak = False
-
-        self.modified_leakage = True
+        self.rebuild_hydraulic_model = True
 
     def _add_control(self, control):
         if control.epanet_control_type in {_ControlType.presolve, _ControlType.pre_and_postsolve}:
@@ -284,7 +300,6 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         if control.epanet_control_type == _ControlType.feasibility:
             self._feasibility_controls.register_control(control)
 
-
     def close_pipe(self, pipe_name) -> None:
         self.events_history.append((self.get_sim_time(), 'close_pipe', (pipe_name)))
 
@@ -294,6 +309,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
         self._add_control(c)
         self._register_controls_with_observers()
+        self.rebuild_hydraulic_model = True
         
     def open_pipe(self, pipe_name):
         self.events_history.append((self.get_sim_time(), 'open_pipe', (pipe_name)))
@@ -304,44 +320,122 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         c = mwntr.network.controls.Control(condition=condition, then_action=c1)
         self._add_control(c)
         self._register_controls_with_observers()
+        self.rebuild_hydraulic_model = True
+    
+    def close_valve(self, valve_name) -> None:
+        self.events_history.append((self.get_sim_time(), 'close_valve', (valve_name)))
+
+        valve = self._wn.get_link(valve_name)
+        c1 = mwntr.network.controls.ControlAction(valve, "status", LinkStatus.Closed)
+        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
+        c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
+        self._add_control(c)
+        self._register_controls_with_observers()
+        self.rebuild_hydraulic_model = True
+        
+    def open_valve(self, valve_name):
+        self.events_history.append((self.get_sim_time(), 'open_valve', (valve_name)))
+
+        valve = self._wn.get_link(valve_name)
+        c1 = mwntr.network.controls.ControlAction(valve, "status", LinkStatus.Open)
+        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
+        c = mwntr.network.controls.Control(condition=condition, then_action=c1)
+        self._add_control(c)
+        self._register_controls_with_observers()
+        self.rebuild_hydraulic_model = True
+    
+    def close_pump(self, pump_name) -> None:
+        self.events_history.append((self.get_sim_time(), 'close_pump', (pump_name)))
+
+        pump = self._wn.get_link(pump_name)
+        c1 = mwntr.network.controls.ControlAction(pump, "status", LinkStatus.Closed)
+        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
+        c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
+        self._add_control(c)
+        self._register_controls_with_observers()
+        self.rebuild_hydraulic_model = True
+        
+    def open_pump(self, pump_name):
+        self.events_history.append((self.get_sim_time(), 'open_pump', (pump_name)))
+
+        pump = self._wn.get_link(pump_name)
+        c1 = mwntr.network.controls.ControlAction(pump, "status", LinkStatus.Open)
+        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
+        c = mwntr.network.controls.Control(condition=condition, then_action=c1)
+        self._add_control(c)
+        self._register_controls_with_observers()
+        self.rebuild_hydraulic_model = True
+
+    #def _set_active_valve(self, valve):
+    #    #c1 = _InternalControlAction(valve, '_user_status', LinkStatus.Active, 'status')
+    #    c1 = _InternalControlAction(valve, '_internal_status', LinkStatus.Active, 'status')
+    #    condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
+    #    c = mwntr.network.controls.Control(condition=condition, then_action=c1, priority=ControlPriority.very_high)
+    #    self._add_control(c)
+    #    self._register_controls_with_observers()
+    #    self.rebuild_hydraulic_model = True
+
+
+    #def set_valve_opening(self, valve_name, setting):
+    #    if setting < 0 or setting > 1:
+    #        raise ValueError('Valve setting must be between 0 and 1')
+    #    elif setting == 0:
+    #        self.close_valve(valve_name)
+    #    elif setting == 1:
+    #        self.open_valve(valve_name)
+    #    else:
+    #        self.events_history.append((self.get_sim_time(), 'set_valve_opening', (valve_name, setting)))
+    #        valve = self._wn.get_link(valve_name)
+    #        #valve.initial_setting = setting
+    #        #valve._setting = setting
+    #        self._set_active_valve(valve)
+    #        c1 = mwntr.network.controls.ControlAction(valve, "setting", setting)
+    #        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
+    #        c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
+    #        self._add_control(c)
+    #        self._register_controls_with_observers()
+    #        self.rebuild_hydraulic_model = True
         
     def plot_network(self, title='Water Network Map', node_labels=False, link_labels=False, show_plot=False):
         mwntr.graphics.plot_interactive_network(self._wn, title=f"{title} - {self._sim_id}", node_labels=node_labels)
 
-    def add_demand(self, node_name, base_demand, category=None):
-        self.events_history.append((self.get_sim_time(), 'add_demand', (node_name, base_demand, category)))
-        self.demand_modifications.append(('add', node_name, base_demand, category))
+    def add_demand(self, node_name, base_demand, name=None, category=None):
+        self.events_history.append((self.get_sim_time(), 'add_demand', (node_name, base_demand, name, category)))
+        self.demand_modifications.append(('add', node_name, base_demand, name, category))
 
     def _apply_demand_modifications(self):
         for action, *args in self.demand_modifications:
             if action == 'add':
-                node_name, base_demand, category = args
+                node_name, base_demand, name, category = args
+                if name is None:
+                    name = 'interactive_pattern'
                 node = self._wn.get_node(node_name)
-                node._pattern_reg.add_usage('interactive_pattern', (node.name, 'Junction'))
-                node.demand_timeseries_list.append((base_demand, 'interactive_pattern', category))
+                node._pattern_reg.add_usage(name, (node.name, 'Junction'))
+                node.demand_timeseries_list.append((base_demand, name, category))
             elif action == 'remove':
-                node_name = args[0]
+                node_name, name = args
+                if name is None:
+                    name = 'interactive_pattern'
                 node = self._wn.get_node(node_name)
-                node._pattern_reg.remove_usage('interactive_pattern', (node.name, 'Junction'))
+                node._pattern_reg.remove_usage(name, (node.name, 'Junction'))
                 base = node.demand_timeseries_list.pop(0)
                 node.demand_timeseries_list.clear()
                 node.demand_timeseries_list.append(base)
         self.demand_modifications.clear()
 
-    def remove_demand(self, node_name):
-        self.events_history.append((self.get_sim_time(), 'remove_demand', (node_name)))
-        self.demand_modifications.append(('remove', node_name))
+    def remove_demand(self, node_name, name=None):
+        self.events_history.append((self.get_sim_time(), 'remove_demand', (node_name, name)))
+        self.demand_modifications.append(('remove', node_name, name))
 
-    def toggle_demand(self, node_name, base_demand=0.0, category=None):
+    def toggle_demand(self, node_name, base_demand=0.0, name=None, category=None):
         node = self._wn.get_node(node_name)
         if len(node.demand_timeseries_list) == 1:
-            self.add_demand(node_name, base_demand, category)
+            self.add_demand(node_name, base_demand, name, category)
         else:
-            self.remove_demand(node_name)
+            self.remove_demand(node_name, name)
 
     def sim_id(self):
         return self._sim_id
-
 
     def branch(self):
         """
