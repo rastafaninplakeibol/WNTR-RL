@@ -452,8 +452,7 @@ def plot_interactive_network(wn, node_attribute=None, node_attribute_name = 'Val
     #node_trace['marker']['colorbar']['title'] = 'Node colorbar title'
     
     # Create figure
-    data = [node_trace]
-    data.extend(edge_traces)
+    data = edge_traces + [node_trace]
 
     autosize = False
     width = None

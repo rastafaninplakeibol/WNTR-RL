@@ -1,11 +1,9 @@
+import time
 from uuid import uuid4
-from matplotlib import pyplot as plt
-from matplotlib.pylab import f
 import numpy as np
 import pandas as pd
 import mwntr
 from mwntr.network.controls import _ControlType
-from mwntr.network.elements import PSValve
 import mwntr.sim.hydraulics
 from mwntr.sim.solvers import NewtonSolver
 import mwntr.sim.results
@@ -15,9 +13,7 @@ from mwntr.network.base import LinkStatus
 from mwntr.network.model import WaterNetworkModel
 from copy import deepcopy
 import plotly.express as px
-from mwntr.network.controls import ControlPriority, _InternalControlAction
-
-
+import plotly.graph_objs as go
 
 from mwntr.sim.core import _Diagnostics, _ValveSourceChecker, _solver_helper
 
@@ -109,7 +105,10 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         
         for node_name, node in self._wn.reservoirs():
             self.node_res['expected_demand'][node_name].append(0.0)
-            self.node_res['satisfacted_demand'][node_name].append(0.0)
+            self.node_res['satisfacted_demand'][node_name].append(1.0)
+        for node_name, node in self._wn.tanks():
+            self.node_res['expected_demand'][node_name].append(0.0)
+            self.node_res['satisfacted_demand'][node_name].append(1.0)
 
     def step_sim(self):
         if not self.initialized_simulation:
@@ -199,6 +198,8 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         if isinstance(self._report_timestep, (float, int)):
             if self._wn.sim_time % self._report_timestep == 0:
                 mwntr.sim.hydraulics.save_results(self._wn, self.node_res, self.link_res)
+                self.save_expected_demand()
+
                 if len(self.results.time) > 0 and int(self._wn.sim_time) == self.results.time[-1]:
                     if int(self._wn.sim_time) != self._wn.sim_time:
                         raise RuntimeError('Time steps increments smaller than 1 second are forbidden.'+
@@ -208,6 +209,8 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
                 self.results.time.append(int(self._wn.sim_time))
         elif self._report_timestep.upper() == 'ALL':
             mwntr.sim.hydraulics.save_results(self._wn, self.node_res, self.link_res)
+            self.save_expected_demand()
+
             if len(self.results.time) > 0 and int(self._wn.sim_time) == self.results.time[-1]:
                 raise RuntimeError('Simulation already solved this timestep')
             self.results.time.append(int(self._wn.sim_time))
@@ -216,8 +219,6 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         self._wn.sim_time += self._hydraulic_timestep
         #overstep = float(self._wn.sim_time) % self._hydraulic_timestep
         #self._wn.sim_time -= overstep
-
-        self.save_expected_demand()
 
         if self.rebuild_hydraulic_model:
             self._model, self._model_updater = mwntr.sim.hydraulics.create_hydraulic_model(wn=self._wn, HW_approx=self._hw_approx)
@@ -256,7 +257,8 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         results.link = {}
 
         for key, _ in node_res.items():
-            results.node[key] = pd.DataFrame(data=np.array([node_res[key][name] for name in node_names]).transpose(), index=results.time,
+            data = [node_res[key][name] for name in node_names]
+            results.node[key] = pd.DataFrame(data=np.array(data).transpose(), index=results.time,
                                         columns=node_names)
 
         for key, _ in link_res.items():
@@ -396,8 +398,326 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
     #        self._register_controls_with_observers()
     #        self.rebuild_hydraulic_model = True
         
-    def plot_network(self, title='Water Network Map', node_labels=False, link_labels=False, show_plot=False):
-        mwntr.graphics.plot_interactive_network(self._wn, title=f"{title} - {self._sim_id}", node_labels=node_labels)
+    def plot_network(self, title='Water Network Map'):
+        mwntr.graphics.plot_interactive_network(self._wn, title=f"{title} - {self._sim_id}", node_labels=True)
+
+    
+    import plotly.graph_objs as go
+
+    def _create_base_figure(self, node_positions, edge_list, node_color_0, edge_color_0,
+                        node_hover_0, edge_hover_0, edge_names, key, max_value, min_value, node_labels=True, link_labels=True):
+        """
+        node_positions: dict of node_name -> (x, y)
+        edge_list: list of edges, each a tuple (start_node, end_node)
+        node_color_0: array of node colors for time 0
+        edge_color_0: single color or array for edges at time 0
+        node_hover_0: array of hover text strings for nodes at time 0
+        edge_hover_0: array of hover text strings for edges at time 0
+        edge_names: initial list of annotations for edges
+        """
+
+        # Build node trace (single scatter for all nodes)
+        node_x = []
+        node_y = []
+        node_text = []
+        for node, (x, y) in node_positions.items():
+            node_x.append(x)
+            node_y.append(y)
+            node_text.append(node)
+
+        node_trace = go.Scatter(
+            x=node_x,
+            y=node_y,
+            mode='markers+text' if node_labels else 'markers',
+            marker=dict(
+                size=30,
+                color=node_color_0,
+                colorscale='Viridis',
+                colorbar=dict(title="titolo"),
+                cmax=max_value,
+                cmin=min_value,
+            ),
+            text=node_text,
+            hovertext=node_hover_0,
+            hoverinfo='text',
+            name='Nodes',
+            showlegend=False   
+        )
+
+
+        edge_traces = []
+        for i, (start, end) in enumerate(edge_list):
+            sx, sy = node_positions[start]
+            ex, ey = node_positions[end]
+            edge_x = [sx, ex]
+            edge_y = [sy, ey]
+            edge_trace = go.Scatter(
+                x=edge_x,
+                y=edge_y,
+                mode='lines',
+                line=dict(color=edge_color_0[i], width=1),
+                # If you have a single color for all edges:
+                # or if edge_color_0 is e.g. 'black' or a single hex
+                hoverinfo='none',
+                name='Edges',
+                showlegend=False
+            )
+            edge_traces.append(edge_trace)
+
+        # (Optional) If you want hover text at edge midpoints:
+        # build a small marker trace
+        mid_x = []
+        mid_y = []
+        mid_hover = []
+        annotations = []
+        for i, (start, end) in enumerate(edge_list):
+            sx, sy = node_positions[start]
+            ex, ey = node_positions[end]
+            mx, my = (sx+ex)/2, (sy+ey)/2
+            mid_x.append(mx)
+            mid_y.append(my)
+            mid_hover.append(edge_hover_0[i])
+
+            if link_labels:
+                annotations.append(dict(
+                    x=mx,
+                    y=my,
+                    xref="x",
+                    yref="y",
+                    text=edge_names[i],
+                    showarrow=False,
+                    font=dict(size=10, color='black'),
+                    bgcolor="#e5ecf6",
+                    align="center"
+                ))
+
+        edge_midpoints_trace = go.Scatter(
+            x=mid_x,
+            y=mid_y,
+            mode='markers',
+            marker=dict(size=20, color='rgba(0,0,0,0)'),  # invisible
+            hoverinfo='text',
+            hovertext=mid_hover,
+            showlegend=False,
+            name='EdgeMidpoints'
+        )
+
+        # Build the base layout with the initial annotations
+        layout = go.Layout(
+            title=f"{key.capitalize()} Over Time",
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            hovermode='closest',
+            annotations=annotations
+        )
+
+        # Our base figure data has these 3 traces
+        data = []
+        data.extend(edge_traces)
+        data.append(edge_midpoints_trace)
+        data.append(node_trace)
+
+        fig = go.Figure(data=data, layout=layout)
+        return fig, annotations
+
+    def _build_frames(self, timesteps, node_color_map, node_hover_map,
+                 edge_color_map, edge_hover_map, annotations,
+                 num_edges, link_labels=True):
+        """
+        timesteps: list of times
+            e.g. sorted(data_over_time.keys())
+        node_color_map[t]: array of node colors at time t
+        node_hover_map[t]: array of node hover strings at time t
+        edge_color_map[t]: array of edge colors at time t, length = num_edges
+        edge_hover_map[t]: array of edge midpoint hover text at time t, length = num_edges
+        annotations_map[t]: list of updated annotations for time t
+        num_edges: int
+            The number of edges (used to slice partial updates)
+        """
+
+        frames = []
+        for t in timesteps:
+            # We'll build a partial data update for each trace.
+            # The final data array for each frame must have (num_edges + 2) dicts:
+            #   [update_edge_0, update_edge_1, ..., update_edge_(num_edges-1),
+            #    update_midpoints, update_nodes]
+
+            frame_data = []
+
+            # 1) Edge traces partial updates
+            #    Each edge_color_map[t] is an array of length = num_edges
+            #    so we update line.color for each edge trace
+            for edge_idx in range(num_edges):
+                edge_partial = dict(
+                    type='scatter',
+                    name='Edges',
+                    line=dict(color=edge_color_map[t][edge_idx])
+                )
+                frame_data.append(edge_partial)
+
+            # 2) Edge midpoints partial update (the next trace after the edges)
+            #    We'll set the hovertext for the midpoints to edge_hover_map[t]
+            midpoint_partial = dict(
+                type='scatter',
+                name='EdgeMidpoints',
+                hovertext=edge_hover_map[t]
+            )
+            frame_data.append(midpoint_partial)
+
+            # 3) Node trace partial update (the last trace)
+            #    We'll set marker.color and hovertext to node_color_map[t], node_hover_map[t]
+            node_partial = dict(
+                name='Nodes',
+                marker=dict(
+                    color=node_color_map[t],
+                ),
+                hovertext=node_hover_map[t],
+            )
+            frame_data.append(node_partial)
+
+            # 4) Updated layout with annotations (if your annotations change each frame)
+            frame = go.Frame(
+                name=str(t),
+                data=frame_data,
+                layout=go.Layout(
+                    annotations=annotations if link_labels else []
+                )
+            )
+            frames.append(frame)
+
+        return frames
+
+
+    def plot_network_over_time(self, data_key, node_labels=True, link_labels=True):
+
+        #before = time.time()
+
+        results = self.get_results()
+        data_over_time = {}
+        node_hover_map = {}
+        edge_hover_map = {}
+        edge_color_map = {}
+
+        global_maximum = -np.inf
+        global_minimum = np.inf
+
+        for t in results.time:
+            data_over_time[t] = []
+            node_hover_map[t] = []
+            edge_hover_map[t] = []
+            edge_color_map[t] = []
+
+            for node in self._wn.nodes():
+                v = results.node[data_key][node[0]][t]
+                if v > global_maximum:
+                    global_maximum = v
+                if v < global_minimum:
+                    global_minimum = v
+                data_over_time[t].append(v)
+                info = f"Node: {node[0]}"
+                for k in results.node.keys():
+                    info += f"<br>{k}: {results.node[k][node[0]][t]:.4f}"
+                node_hover_map[t].append(info)
+
+            for (name, link) in self._wn.links():
+                start = link.start_node_name
+                end = link.end_node_name
+                info = f"Edge {name}: {start} - {end}"
+                for k in results.link.keys():
+                    info += f"<br>{k}: {results.link[k][name][t]:.4f}"
+                edge_hover_map[t].append(info)
+                edge_color_map[t].append('black')
+
+        node_positions = {}
+        for node in self._wn.nodes():
+            node_positions[node[0]] = (node[1].coordinates[0], node[1].coordinates[1])
+
+        edges = [(link[1].start_node_name, link[1].end_node_name) for link in self._wn.links()]
+        edges_names = [link[0] for link in self._wn.links()]
+        times = sorted([t for t in results.time])
+
+        # Build base figure
+        fig, annotations = self._create_base_figure(
+            node_positions=node_positions,
+            edge_list=edges,
+            node_color_0=data_over_time[times[0]],
+            edge_color_0=edge_color_map[times[0]],
+            node_hover_0=node_hover_map[times[0]],
+            edge_hover_0=edge_hover_map[times[0]],
+            edge_names=edges_names,
+            key=data_key,
+            max_value=global_maximum,
+            min_value=global_minimum,
+            node_labels=node_labels,
+            link_labels=link_labels,
+        )
+
+        # Build frames
+        frames = self._build_frames(
+            timesteps=times,
+            node_color_map=data_over_time,
+            node_hover_map=node_hover_map,
+            edge_color_map=edge_color_map,
+            edge_hover_map=edge_hover_map,
+            annotations=annotations,
+            num_edges=len(edges),
+            link_labels=link_labels,
+        )
+
+        fig.frames = frames
+
+        # Add standard slider or play button
+        fig.update_layout(
+            updatemenus=[
+                dict(
+                    type='buttons',
+                    showactive=False,
+                    y=1,
+                    x=1.2,
+                    xanchor='right',
+                    yanchor='top',
+                    pad=dict(t=0, r=10),
+                    buttons=[
+                        dict(
+                            label='Play',
+                            method='animate',
+                            args=[None, dict(
+                                frame=dict(duration=250, redraw=True),
+                                transition=dict(duration=0),
+                                fromcurrent=True,
+                                mode='immediate'
+                            )]
+                        ),
+                        dict(
+                            label='Pause',
+                            method='animate',
+                            args=[[None], dict(
+                                frame=dict(duration=0, redraw=True),
+                                transition=dict(duration=0),
+                                mode='immediate'
+                            )]
+                        )
+                    ]
+                )
+            ],
+            sliders=[dict(
+                steps=[
+                    dict(
+                        label=str(t),
+                        method='animate',
+                        args=[[str(t)], dict(
+                            frame=dict(duration=0, redraw=True),
+                            transition=dict(duration=0),
+                            mode='immediate'
+                        )]
+                    ) for t in times
+                ]
+            )]
+        )
+
+        #after = time.time()
+        #print(f"Time to build figure: {after - before:.2f} seconds")
+        fig.show()
 
     def add_demand(self, node_name, base_demand, name=None, category=None):
         self.events_history.append((self.get_sim_time(), 'add_demand', (node_name, base_demand, name, category)))
@@ -511,3 +831,246 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
                 line_style = 'solid' if 'create_branch' in action else 'dash'
                 fig.add_vline(x=time, line_dash=line_style, line_color=color, annotation_text='  ', annotation_hovertext=f'{action}({args})')           
         fig.show()
+
+
+    '''
+    
+    def plot_network_over_time_old(self, data_key, node_labels=True, link_labels=True):
+        start_time = time.time()
+
+        node_positions = {}
+        for node in self._wn.nodes():
+            node_positions[node[0]] = (node[1].coordinates[0], node[1].coordinates[1])
+
+        edges = [(link[0], (link[1].start_node_name, link[1].end_node_name)) for link in self._wn.links()]
+
+        data_over_time = {}
+        results = self.get_results()
+        node_hover_text = {}
+        edge_hover_text = {}
+
+        for t in results.time:
+            data_over_time[t] = {}
+            node_hover_text[t] = []
+            edge_hover_text[t] = []
+
+            for node in self._wn.nodes():
+                data_over_time[t][node[0]] = results.node[data_key][node[0]][t]
+                info = f"Node: {node[0]}"
+                for k in results.node.keys():
+                    info += f"<br>{k}: {results.node[k][node[0]][t]:.4f}"
+                node_hover_text[t].append(info)
+
+            for (name, link) in self._wn.links():
+                start = link.start_node_name
+                end = link.end_node_name
+                info = f"Edge {name}: {start} - {end}"
+                for k in results.link.keys():
+                    info += f"<br>{k}: {results.link[k][name][t]:.4f}"
+                edge_hover_text[t].append(info)
+
+
+
+        # Base node trace (for initial frame)
+        node_x = [node_positions[n][0] for n in node_positions]
+        node_y = [node_positions[n][1] for n in node_positions]
+        initial_data = [data_over_time[results.time[0]][n] for n in node_positions]
+
+        node_trace = go.Scatter(
+            x=node_x,
+            y=node_y,
+            mode='markers+text' if node_labels else 'markers',
+            text=list(node_positions.keys()),
+            hovertext=node_hover_text[0],
+            hoverinfo='text',
+            marker=dict(
+                size=20,
+                color=initial_data,  # Use data as color
+                colorscale='Viridis',
+                colorbar=dict(title=data_key.capitalize())
+            ),
+            name='Nodes',
+            showlegend=False  # Hides legend for nodes
+        )
+
+        edge_traces = []
+        initial_annotations = []
+        for i,(name, (start, end)) in enumerate(edges):
+            x0, y0 = node_positions[start]
+            x1, y1 = node_positions[end]
+
+            mx, my = (x0 + x1)/2, (y0 + y1)/2
+            edge_trace = go.Scatter(
+                x=[x0, x1],
+                y=[y0, y1],
+                mode='lines',
+                line=dict(color='black', width=1),
+                name='Edges',
+                showlegend=False  # Hides legend for edges
+            )
+
+            midpoint_marker = go.Scatter(
+                x=[mx],
+                y=[my],
+                mode='markers',
+                marker=dict(size=20, color='rgba(0, 0, 0, 0)'),  # invisible
+                hoverinfo='text',
+                hovertext=[edge_hover_text[0][i]],
+                showlegend=False
+            )
+
+            edge_traces += [edge_trace, midpoint_marker]
+
+
+            if link_labels:
+                initial_annotations.append(dict(
+                    x=mx,
+                    y=my,
+                    xref="x",
+                    yref="y",
+                    text=name,
+                    showarrow=False,
+                    font=dict(size=12, color='black'),
+                    bgcolor="#e5ecf6",
+                    align="center"
+                ))
+
+                
+
+        # Create frames for each timestep
+        frames = []
+        for t in sorted(data_over_time.keys()):
+            data_at_t = [data_over_time[t][n] for n in node_positions]
+            # Update hover text for nodes per frame if desired.
+            # For a starting point, we'll reuse the same hover text;
+            # you can modify this to include time-dependent information.
+            frame_node = go.Scatter(
+                x=node_x,
+                y=node_y,
+                mode='markers+text' if node_labels else 'markers',
+                text=list(node_positions.keys()),
+                hovertext=node_hover_text[t],
+                hoverinfo='text',
+                marker=dict(
+                    size=20,
+                    color=data_at_t,
+                    colorscale='Viridis',
+                    colorbar=dict(title=data_key.capitalize())
+                ),
+                name="Nodes",
+                showlegend=False
+            )
+            frame_edges_traces = []
+            annotations = []
+
+            for i,(name, (start, end)) in enumerate(edges):
+                x0, y0 = node_positions[start]
+                x1, y1 = node_positions[end]
+
+                edge_trace = go.Scatter(
+                    x=[x0, x1],
+                    y=[y0, y1],
+                    mode='lines',
+                    line=dict(color='black', width=1),
+                    name='Edges',
+                    showlegend=False  # Hides legend for edges
+                )
+                midpoint_marker = go.Scatter(
+                        x=[mx],
+                        y=[my],
+                        mode='markers',
+                        marker=dict(size=20, color='rgba(0, 0, 0, 0)'),  # invisible
+                        hoverinfo='text',
+                        hovertext=[edge_hover_text[t][i]],
+                        showlegend=False
+                    )
+
+                frame_edges_traces += [edge_trace, midpoint_marker]
+
+
+                if link_labels:
+                    mx, my = (x0 + x1)/2, (y0 + y1)/2
+                    annotations.append(dict(
+                        x=mx,
+                        y=my,
+                        xref="x",
+                        yref="y",
+                        text=name,
+                        showarrow=False,
+                        font=dict(size=12, color='black'),
+                        bgcolor="#e5ecf6",          # background color
+                        align="center"
+                    ))
+                
+            frame = go.Frame(
+                data= frame_edges_traces + [frame_node],
+                name=str(t),
+                layout=go.Layout(annotations=annotations)
+            )
+            frames.append(frame)
+
+        # Layout with slider settings; remove the legend config to hide trace labels.
+        layout = go.Layout(
+            title=f"{data_key.capitalize()} Over Time",
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            hovermode='closest',
+            annotations=initial_annotations,
+            updatemenus=[
+                dict(
+                    type='buttons',
+                    showactive=False,
+                    y=1,
+                    x=1.2,
+                    xanchor='right',
+                    yanchor='top',
+                    pad=dict(t=0, r=10),
+                    buttons=[
+                        dict(
+                            label='Play',
+                            method='animate',
+                            args=[None, dict(
+                                frame=dict(duration=250, redraw=False),
+                                transition=dict(duration=0),
+                                fromcurrent=True,
+                                mode='immediate'
+                            )]
+                        ),
+                        dict(
+                            label='Pause',
+                            method='animate',
+                            args=[[None], dict(
+                                frame=dict(duration=0, redraw=False),
+                                transition=dict(duration=0),
+                                mode='immediate'
+                            )]
+                        )
+                    ]
+                )
+            ],
+            sliders=[dict(
+                active=0,
+                currentvalue=dict(prefix="Time: "),
+                pad=dict(t=50),
+                steps=[
+                    dict(
+                        label=str(t),
+                        method='animate',
+                        args=[[str(t)], dict(
+                            frame=dict(duration=250, redraw=True),
+                            transition=dict(duration=0),
+                            mode='immediate'
+                        )]
+                    ) for t in sorted(data_over_time.keys())
+                ]
+            )]
+        )
+
+        data = edge_traces + [node_trace]
+        fig = go.Figure(data=data, layout=layout, frames=frames)
+
+        end_time = time.time()
+        print(f"Time to create plot: {end_time - start_time} seconds")
+        fig.show()
+
+    '''

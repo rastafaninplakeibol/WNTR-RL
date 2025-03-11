@@ -1,4 +1,6 @@
 from calendar import c
+import sys
+import time
 from turtle import color
 from uuid import UUID
 import mwntr
@@ -90,6 +92,13 @@ def create_water_network_model():
 #wn = mwntr.network.WaterNetworkModel('NET_2.inp')
 wn = create_water_network_model()
 
+wn.options.time.duration = 86400 / 12     # 10 days
+wn.options.time.hydraulic_timestep = 30
+wn.options.time.pattern_timestep = 30 
+wn.options.time.rule_timestep = 30
+wn.options.time.report_timestep = 30
+wn.options.time.quality_timestep = 30   
+
 sim = MWNTRInteractiveSimulator(wn)
 sim.init_simulation()
 
@@ -100,6 +109,7 @@ branched_sim_2 = None
 
 sims = [sim]
 
+start = time.time()
 while not sim.is_terminated():
     #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
     current_time = sim.get_sim_time()
@@ -109,25 +119,25 @@ while not sim.is_terminated():
     
     elif current_time == sim.hydraulic_timestep() * 78:
         sim.toggle_demand('H1', name='house1_pattern')
-
+    
     elif current_time == sim.hydraulic_timestep() * 101:
         sim.toggle_demand('H1', 1.0, name='house1_pattern')
-
+    
     elif current_time == sim.hydraulic_timestep() * 145:
         sim.toggle_demand('H1', name='house1_pattern')
-
+    
     elif current_time == sim.hydraulic_timestep() * 178:
         sim.close_pump('P1')
-
+    
     elif current_time == sim.hydraulic_timestep() * 211:
         sim.open_pump('P1')
-
+    
     #elif current_time == sim.hydraulic_timestep() * 60:
     #    #branched_sim_1 = sim.branch()
     #    branched_sim_2 = sim.branch()
     #    #sims.append(branched_sim_1)
     #    sims.append(branched_sim_2)
-
+    #
     #elif current_time == sim.hydraulic_timestep() * 70:
     #    #branched_sim_1.stop_leak('J1')
     #    #branched_sim_2.close_pipe('PR0')
@@ -141,11 +151,15 @@ while not sim.is_terminated():
 
     for s in sims:
         s.step_sim()
+end = time.time()
+print(f"Elapsed time: {end - start}")
 
 #for s in sims:
 #    s.plot_results('node','pressure')
 
 #branched_sim_1.plot_results('node','pressure', ['H1', 'H2', 'H3'])
-sim.plot_results('node','demand', ['R1', 'H1', 'H2', 'H3'])
-sim.plot_results('node','expected_demand', ['R1', 'H1', 'H2', 'H3'])
-sim.plot_results('node','satisfacted_demand', ['R1', 'H1', 'H2', 'H3'])
+
+sim.plot_network_over_time('pressure', node_labels=False, link_labels=True)
+#sim.plot_results('node','demand', ['R1', 'H1', 'H2', 'H3'])
+#sim.plot_results('node','expected_demand', ['R1', 'H1', 'H2', 'H3'])
+#sim.plot_results('node','satisfacted_demand', ['R1', 'H1', 'H2', 'H3'])
