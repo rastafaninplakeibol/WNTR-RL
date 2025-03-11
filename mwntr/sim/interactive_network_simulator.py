@@ -99,16 +99,16 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
             v = demand.value
             self.node_res['expected_demand'][node_name].append(v)
             if v == 0:
-                self.node_res['satisfacted_demand'][node_name].append(1)
+                self.node_res['satisfied_demand'][node_name].append(1)
             else:
-                self.node_res['satisfacted_demand'][node_name].append(self.node_res['demand'][node_name][-1] / v)
+                self.node_res['satisfied_demand'][node_name].append(self.node_res['demand'][node_name][-1] / v)
         
         for node_name, node in self._wn.reservoirs():
             self.node_res['expected_demand'][node_name].append(0.0)
-            self.node_res['satisfacted_demand'][node_name].append(1.0)
+            self.node_res['satisfied_demand'][node_name].append(1.0)
         for node_name, node in self._wn.tanks():
             self.node_res['expected_demand'][node_name].append(0.0)
-            self.node_res['satisfacted_demand'][node_name].append(1.0)
+            self.node_res['satisfied_demand'][node_name].append(1.0)
 
     def step_sim(self):
         if not self.initialized_simulation:

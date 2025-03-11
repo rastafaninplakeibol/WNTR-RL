@@ -159,7 +159,7 @@ print(f"Elapsed time: {end - start}")
 
 #branched_sim_1.plot_results('node','pressure', ['H1', 'H2', 'H3'])
 
-sim.plot_network_over_time('pressure', node_labels=False, link_labels=True)
+sim.plot_network_over_time('satisfied_demand', node_labels=False, link_labels=True)
 #sim.plot_results('node','demand', ['R1', 'H1', 'H2', 'H3'])
 #sim.plot_results('node','expected_demand', ['R1', 'H1', 'H2', 'H3'])
-#sim.plot_results('node','satisfacted_demand', ['R1', 'H1', 'H2', 'H3'])
+#sim.plot_results('node','satisfied_demand', ['R1', 'H1', 'H2', 'H3'])
