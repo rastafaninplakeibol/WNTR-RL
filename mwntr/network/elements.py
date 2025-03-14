@@ -2378,6 +2378,10 @@ class Demands(MutableSequence):
     def clear(self):
         """S.clear() - remove all entries"""
         self._list = []
+    
+    def remove(self, obj):
+        """S.remove(value) - remove first occurrence of value"""
+        self._list.remove(self.to_ts(obj))
 
     def at(self, time, category=None, multiplier=1):
         """Return the total demand at a given time."""

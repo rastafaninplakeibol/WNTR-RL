@@ -1,7 +1,11 @@
+import json
+import math
 import time
 from uuid import uuid4
+from networkx import diameter
 import numpy as np
 import pandas as pd
+from sympy import Q
 import mwntr
 from mwntr.network.controls import _ControlType
 import mwntr.sim.hydraulics
@@ -302,71 +306,47 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         if control.epanet_control_type == _ControlType.feasibility:
             self._feasibility_controls.register_control(control)
 
-    def close_pipe(self, pipe_name) -> None:
-        self.events_history.append((self.get_sim_time(), 'close_pipe', (pipe_name)))
-
-        pipe = self._wn.get_link(pipe_name)
-        c1 = mwntr.network.controls.ControlAction(pipe, "status", LinkStatus.Closed)
+    def _close_link(self, link_name) -> None:
+        link = self._wn.get_link(link_name)
+        c1 = mwntr.network.controls.ControlAction(link, "status", LinkStatus.Closed)
         condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
         c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
         self._add_control(c)
         self._register_controls_with_observers()
         self.rebuild_hydraulic_model = True
+
+    def _open_link(self, link_name):
+        link = self._wn.get_link(link_name)
+        c1 = mwntr.network.controls.ControlAction(link, "status", LinkStatus.Open)
+        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
+        c = mwntr.network.controls.Control(condition=condition, then_action=c1)
+        self._add_control(c)
+        self._register_controls_with_observers()
+        self.rebuild_hydraulic_model = True
+
+    def close_pipe(self, pipe_name) -> None:
+        self.events_history.append((self.get_sim_time(), 'close_pipe', (pipe_name)))
+        self._close_link(pipe_name)
         
     def open_pipe(self, pipe_name):
         self.events_history.append((self.get_sim_time(), 'open_pipe', (pipe_name)))
-
-        pipe = self._wn.get_link(pipe_name)
-        c1 = mwntr.network.controls.ControlAction(pipe, "status", LinkStatus.Open)
-        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
-        c = mwntr.network.controls.Control(condition=condition, then_action=c1)
-        self._add_control(c)
-        self._register_controls_with_observers()
-        self.rebuild_hydraulic_model = True
+        self._open_link(pipe_name)
     
     def close_valve(self, valve_name) -> None:
         self.events_history.append((self.get_sim_time(), 'close_valve', (valve_name)))
-
-        valve = self._wn.get_link(valve_name)
-        c1 = mwntr.network.controls.ControlAction(valve, "status", LinkStatus.Closed)
-        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
-        c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
-        self._add_control(c)
-        self._register_controls_with_observers()
-        self.rebuild_hydraulic_model = True
+        self._close_link(valve_name)
         
     def open_valve(self, valve_name):
         self.events_history.append((self.get_sim_time(), 'open_valve', (valve_name)))
-
-        valve = self._wn.get_link(valve_name)
-        c1 = mwntr.network.controls.ControlAction(valve, "status", LinkStatus.Open)
-        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
-        c = mwntr.network.controls.Control(condition=condition, then_action=c1)
-        self._add_control(c)
-        self._register_controls_with_observers()
-        self.rebuild_hydraulic_model = True
+        self._open_link(valve_name)
     
     def close_pump(self, pump_name) -> None:
         self.events_history.append((self.get_sim_time(), 'close_pump', (pump_name)))
-
-        pump = self._wn.get_link(pump_name)
-        c1 = mwntr.network.controls.ControlAction(pump, "status", LinkStatus.Closed)
-        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
-        c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
-        self._add_control(c)
-        self._register_controls_with_observers()
-        self.rebuild_hydraulic_model = True
-        
+        self._close_link(pump_name)
+           
     def open_pump(self, pump_name):
         self.events_history.append((self.get_sim_time(), 'open_pump', (pump_name)))
-
-        pump = self._wn.get_link(pump_name)
-        c1 = mwntr.network.controls.ControlAction(pump, "status", LinkStatus.Open)
-        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
-        c = mwntr.network.controls.Control(condition=condition, then_action=c1)
-        self._add_control(c)
-        self._register_controls_with_observers()
-        self.rebuild_hydraulic_model = True
+        self._open_link(pump_name)
 
     #def _set_active_valve(self, valve):
     #    #c1 = _InternalControlAction(valve, '_user_status', LinkStatus.Active, 'status')
@@ -399,10 +379,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
     #        self.rebuild_hydraulic_model = True
         
     def plot_network(self, title='Water Network Map'):
-        mwntr.graphics.plot_interactive_network(self._wn, title=f"{title} - {self._sim_id}", node_labels=True)
-
-    
-    import plotly.graph_objs as go
+        mwntr.graphics.plot_interactive_network(self._wn, title=f"{title} - {self._sim_id}", node_labels=True)    
 
     def _create_base_figure(self, node_positions, edge_list, node_color_0, edge_color_0,
                         node_hover_0, edge_hover_0, edge_names, key, max_value, min_value, node_labels=True, link_labels=True):
@@ -433,7 +410,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
                 size=30,
                 color=node_color_0,
                 colorscale='Viridis',
-                colorbar=dict(title="titolo"),
+                colorbar=dict(title=f"{key.capitalize()}"),
                 cmax=max_value,
                 cmin=min_value,
             ),
@@ -587,7 +564,6 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         return frames
 
-
     def plot_network_over_time(self, data_key, node_labels=True, link_labels=True):
 
         #before = time.time()
@@ -738,9 +714,9 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
                     name = 'interactive_pattern'
                 node = self._wn.get_node(node_name)
                 node._pattern_reg.remove_usage(name, (node.name, 'Junction'))
-                base = node.demand_timeseries_list.pop(0)
-                node.demand_timeseries_list.clear()
-                node.demand_timeseries_list.append(base)
+                for ts in node.demand_timeseries_list._list:
+                    if ts.pattern_name == name:
+                        node.demand_timeseries_list.remove(ts)
         self.demand_modifications.clear()
 
     def remove_demand(self, node_name, name=None):
@@ -749,10 +725,11 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
     def toggle_demand(self, node_name, base_demand=0.0, name=None, category=None):
         node = self._wn.get_node(node_name)
-        if len(node.demand_timeseries_list) == 1:
-            self.add_demand(node_name, base_demand, name, category)
-        else:
-            self.remove_demand(node_name, name)
+        for ts in node.demand_timeseries_list._list:
+            if ts.pattern_name == name:
+                self.remove_demand(node_name, name)
+                return
+        self.add_demand(node_name, base_demand, name, category)    
 
     def sim_id(self):
         return self._sim_id
@@ -832,6 +809,164 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
                 fig.add_vline(x=time, line_dash=line_style, line_color=color, annotation_text='  ', annotation_hovertext=f'{action}({args})')           
         fig.show()
 
+    def _compute_feature_ranges(self, nodes_features, edges_features):
+        """Computes min/max for all numerical features before scaling."""
+        feature_ranges = {}
+        nodes = self._wn.nodes._data.values()
+        edges = self._wn.links._data.values()
+
+        for node in nodes:
+            for feature in nodes_features:
+                value = getattr(node, feature, -1)
+                if value is not None and value != -1:
+                    if feature not in feature_ranges:
+                        feature_ranges[feature] = [value, value]
+                    else:
+                        feature_ranges[feature][0] = min(feature_ranges[feature][0], value)
+                        feature_ranges[feature][1] = max(feature_ranges[feature][1], value)
+
+        for edge in edges:
+            for feature in edges_features:
+                value = getattr(edge, feature, -1)
+                if value is not None and value != -1:
+                    if feature not in feature_ranges:
+                        feature_ranges[feature] = [value, value]
+                    else:
+                        feature_ranges[feature][0] = min(feature_ranges[feature][0], value)
+                        feature_ranges[feature][1] = max(feature_ranges[feature][1], value)
+
+                    if feature == 'diameter':
+                        value = getattr(edge, 'flow', -1)
+                        if value is not None and value != -1 and value != 0:
+                            velocity = abs(edge.flow)*4.0 / (math.pi*edge.diameter**2)
+                            feature = 'velocity'
+                            if feature not in feature_ranges:
+                                feature_ranges[feature] = [velocity, velocity]
+                            else:
+                                feature_ranges[feature][0] = min(feature_ranges[feature][0], velocity)
+                                feature_ranges[feature][1] = max(feature_ranges[feature][1], velocity)
+                
+        
+        return feature_ranges
+
+    def _scale(self, value, feature, feature_ranges):
+        """Scales a feature dynamically based on dataset min/max"""
+        has_feature = 0
+        if value is None:
+            value = -1
+        if feature in feature_ranges and value != -1:
+            has_feature = 1
+            min_val, max_val = feature_ranges[feature]
+            if min_val != max_val:  # Avoid division by zero
+                value = (value - min_val) / (max_val - min_val)
+        
+        if abs(value) < 1e-5:
+            value = 0
+ 
+        return value, has_feature
+
+    def extract_snapshot(self, filename=None):
+
+        nodes = self._wn.nodes._data.values()
+        edges = self._wn.links._data.values()
+
+        snapshot = {
+            'time': self.get_sim_time(),
+            'nodes': {},
+            'edges': {},
+        }
+
+        type_map = {
+            'Junction':  [1, 0, 0, 0, 0, 0],
+            'Tank':      [0, 1, 0, 0, 0, 0],
+            'Reservoir': [0, 0, 1, 0, 0, 0],
+            'Pipe':      [0, 0, 0, 1, 0, 0],
+            'Pump':      [0, 0, 0, 0, 1, 0],
+            'Valve':     [0, 0, 0, 0, 0, 1],
+        }
+
+        
+
+        nodes_features = ['demand', 'elevation', 'head', 'leak_status', 'leak_area',
+                        'leak_discharge_coeff', 'leak_demand', 'pressure', 'diameter',
+                        'level', 'max_level', 'min_level', 'overflow']
+        edges_features = ['base_speed', 'flow', 'headloss', 'roughness', 'velocity', 'diameter']
+
+        nodes_always_valued_features = ["demand", "head", "leak_area", "leak_demand", "leak_discharge_coeff", "leak_status", "pressure"]
+        edges_always_valued_features = ['flow']
+
+        feature_ranges = self._compute_feature_ranges(nodes_features, edges_features)
+        print(feature_ranges)
+
+        for n in nodes:
+            node_data = {}
+        
+            for feature in nodes_features:
+                value = getattr(n, feature, -1)
+                scaled_value, has_feature = self._scale(value, feature, feature_ranges)
+                node_data[feature] = scaled_value
+                if feature not in nodes_always_valued_features:
+                    node_data[f'has_{feature}'] = has_feature
+                    
+            setting = getattr(n, 'setting', -1)
+            if isinstance(setting, mwntr.network.TimeSeries):
+                setting = setting.at(self.get_sim_time())
+            if setting is not None and setting != -1:
+                node_data['setting'] = setting
+                node_data['has_setting'] = 1
+            else:
+                node_data['setting'] = -1
+                node_data['has_setting'] = 0
+            
+            node_data['node_type'] = type_map[n.node_type]
+
+            snapshot['nodes'][n.name] = node_data
+
+        for l in edges:
+            edge_data = {}
+
+            for feature in edges_features:
+                value = getattr(l, feature, -1)
+                scaled_value, has_feature = self._scale(value, feature, feature_ranges)
+                edge_data[feature] = scaled_value
+                if feature not in edges_always_valued_features:
+                    edge_data[f'has_{feature}'] = has_feature
+
+            setting = getattr(l, 'setting', -1)
+            if isinstance(setting, mwntr.network.TimeSeries):
+                setting = setting.at(self.get_sim_time())
+            if setting is not None and setting != -1:
+                edge_data['setting'] = setting
+                edge_data['has_setting'] = 1
+            else:
+                edge_data['setting'] = -1
+                edge_data['has_setting'] = 0
+
+            if hasattr(l,"diameter") and l.diameter is not None:
+                velocity, has_velocity = self._scale(abs(l.flow)*4.0 / (math.pi*l.diameter**2), 'velocity', feature_ranges)
+                edge_data["velocity"] = velocity
+                edge_data["has_velocity"] = has_velocity
+            else:
+                edge_data["velocity"] = -1
+                edge_data["has_velocity"] = 0
+            
+            if l.status == LinkStatus.Closed:
+                edge_data['status'] = 0
+            else:
+                edge_data['status'] = 1
+            
+
+            edge_data['link_type'] = type_map[l.link_type]  
+            edge_data['start'] = l.start_node_name
+            edge_data['end'] = l.end_node_name
+
+            snapshot['edges'][l.name] = edge_data
+
+        if filename is not None:
+            with open(filename, 'w') as f:
+                json.dump(snapshot, f, indent=4, sort_keys=True)
+
+        return snapshot
 
     '''
     
