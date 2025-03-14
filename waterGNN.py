@@ -25,8 +25,8 @@ def parse_snapshot(snapshot_filename):
     for node_name in node_names:
         node = nodes[node_name]
         feature_vector = [node[feature] for feature in node_feature_keys]
-        feature_vector.append(node["setting"])  # Append one-hot encoded node type
-        feature_vector += node["node_type"]  # Append one-hot encoded node type
+        feature_vector.append(node["setting"])
+        feature_vector += node["node_type"]
         node_features.append(feature_vector)
 
     node_features_data = torch.tensor(np.array(node_features, dtype=np.float32))
@@ -42,7 +42,7 @@ def parse_snapshot(snapshot_filename):
     edge_features = []
     for edge in edges.values():
         feature_vector = [edge[feature] for feature in edge_feature_keys]
-        feature_vector += edge["link_type"]  # Append one-hot encoded edge type
+        feature_vector += edge["link_type"]
         edge_features.append(feature_vector)
 
     edge_attr = torch.tensor(np.array(edge_features, dtype=np.float32))
@@ -56,6 +56,11 @@ class WaterGNN(torch.nn.Module):
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, out_channels)
 
+    def from_state_file(state_file, in_channels, hidden_channels, out_channels):
+        model = WaterGNN(in_channels, hidden_channels, out_channels)
+        model.load_state_dict(torch.load(state_file))
+        return model
+
     def forward(self, x, edge_index, edge_attr=None):
         x = self.conv1(x, edge_index, edge_weight=None)
         x = F.relu(x)
@@ -67,14 +72,21 @@ if __name__ == "__main__":
     data = parse_snapshot("snapshot_2.json")
     # Instantiate the GNN model
     
-    in_channels = 20 #data.x.shape[1]  # Number of input features
+    in_channels = 20 #data.x.shape[1]
     print(data.x.shape[1])
     hidden_channels = 32
-    out_channels = 1  # Example: Predicting pressure
-
+    out_channels = 1  
+    
     model = WaterGNN(in_channels, hidden_channels, out_channels)
 
-    # Run a forward pass
+    
     output = model(data.x, data.edge_index, data.edge_attr)
 
-    print("Model Output Shape:", output.shape)  # Should match (num_nodes, out_channels)
+    print("Model Output Shape:", output.shape)  
+    
+    #save the model
+    torch.save(model.state_dict(), 'model.pth')
+    print("Model saved")
+
+    #load the model
+    model = WaterGNN.from_state_file('model.pth', in_channels, hidden_channels, out_channels)

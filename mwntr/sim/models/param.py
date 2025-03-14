@@ -327,7 +327,7 @@ class elevation_param(Definition):
             m.elevation = aml.ParamDict()
 
         if index_over is None:
-            index_over = wn.junction_name_list
+            index_over = wn.junction_name_list + wn.tank_name_list
 
         for node_name in index_over:
             node = wn.get_node(node_name)

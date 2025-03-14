@@ -42,7 +42,8 @@ def create_water_network_model():
     wn.add_curve('pump_curve', 'HEAD', [(100,100)])
 
     # 2. Add a Reservoir (Tank1) on the left
-    wn.add_reservoir('R1', base_head=500.0, head_pattern=None, coordinates=(-50, 50))
+    #wn.add_reservoir('R1', base_head=500.0, head_pattern=None, coordinates=(-50, 50))
+    wn.add_tank('R1', elevation=100, init_level=100, max_level=100, coordinates=(-50, 50))
 
     # 3. Build a rectangular loop (9 junctions: J0–J8)
     wn.add_junction('J0', base_demand=0.0, elevation=10.0, demand_pattern=None, coordinates=(0, 100))
@@ -92,18 +93,24 @@ def create_water_network_model():
 #wn = mwntr.network.WaterNetworkModel('NET_2.inp')
 wn = create_water_network_model()
 
-one_day_in_seconds = 86400
-wn.options.time.duration = one_day_in_seconds / 12  # 2 hours
+one_day_in_seconds = 86400 / 24
+wn.options.time.duration = one_day_in_seconds  # 2 hours
 wn.options.time.hydraulic_timestep = 30
 wn.options.time.pattern_timestep = 30 
 wn.options.time.rule_timestep = 30
 wn.options.time.report_timestep = 30
-wn.options.time.quality_timestep = 30   
+wn.options.time.quality_timestep = 30
+
+
+t = wn.get_node('R1')
+t.add_leak(wn, 0.1, start_time=30*5, end_time=30*37)
+#t.add_demand(0.1, 'house1_pattern')
 
 sim = MWNTRInteractiveSimulator(wn)
+
 sim.init_simulation()
 
-sim.plot_network()
+#sim.plot_network()
 
 branched_sim_1 = None
 branched_sim_2 = None
@@ -115,22 +122,27 @@ while not sim.is_terminated():
     #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
     current_time = sim.get_sim_time()
 
-    #if current_time == sim.hydraulic_timestep() * 13:
-    #    sim.toggle_demand('H1', 0.1, name='house1_pattern')
-    #
-    #
+    #if current_time == sim.hydraulic_timestep() * 2:
+    #    #sim.toggle_demand('H1', 0.1, name='house1_pattern')
+    #    #sim.start_leak('J3', 0.01)
+
+    #if current_time == sim.hydraulic_timestep() * 0:
+    #   #sim.toggle_demand('H1', 0.1, name='house1_pattern')
+    #   sim.start_leak('R1', 0.1)
+    
+    
     #elif current_time == sim.hydraulic_timestep() * 26:
     #    sim.toggle_demand('H1', 0.2, name='house2_pattern')
     #
     #elif current_time == sim.hydraulic_timestep() * 37:
-    #    sim.toggle_demand('H1', 0.3, name='house3_pattern')
+    #    sim.stop_leak('J1')
     #
-    if current_time == sim.hydraulic_timestep() * 145:
-        b = time.time()
-        sim.extract_snapshot(filename='snapshot_2.json')
-        e = time.time()
-        print(f"Elapsed time: {e - b}")
-        #print(sim.extract_snapshot(filename=None))
+    #if current_time == sim.hydraulic_timestep() * 145:
+    #    b = time.time()
+    #    sim.extract_snapshot(filename='snapshot_2.json')
+    #    e = time.time()
+    #    print(f"Elapsed time: {e - b}")
+    #    #print(sim.extract_snapshot(filename=None))
     #
     #
     #    sim.toggle_demand('H1', name='house1_pattern')
@@ -164,11 +176,13 @@ while not sim.is_terminated():
 
     for s in sims:
         s.step_sim()
+
+
 end = time.time()
 print(f"Elapsed time: {end - start}")
 
-#for s in sims:
-#    s.plot_results('node','pressure')
+for s in sims:
+    s.plot_results('node','pressure')
 
 #sim.plot_results('node','demand', ['H1', 'H2', 'H3'])
 #branched_sim_1.plot_results('node','pressure', ['H1', 'H2', 'H3'])

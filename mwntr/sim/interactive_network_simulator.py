@@ -281,19 +281,19 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
     def start_leak(self, node_name, leak_area=0.1, leak_discharge_coefficient=0.75):
         self.events_history.append((self.get_sim_time(), 'start_leak', (node_name, leak_area, leak_discharge_coefficient)))
 
-        junction = self._wn.get_node(node_name)
-        junction._leak_status = True
-        junction._leak = True
-        junction._leak_area = leak_area
-        junction._leak_discharge_coeff = leak_discharge_coefficient
+        node = self._wn.get_node(node_name)
+        node._leak_status = True
+        node._leak = True
+        node._leak_area = leak_area
+        node._leak_discharge_coeff = leak_discharge_coefficient
         self.rebuild_hydraulic_model = True
         
     def stop_leak(self, node_name):
         self.events_history.append((self.get_sim_time(), 'stop_leak', (node_name)))
 
-        junction = self._wn.get_node(node_name)
-        junction._leak_status = False
-        junction._leak = False
+        node = self._wn.get_node(node_name)
+        node._leak_status = False
+        node._leak = False
         self.rebuild_hydraulic_model = True
 
     def _add_control(self, control):
@@ -348,36 +348,6 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         self.events_history.append((self.get_sim_time(), 'open_pump', (pump_name)))
         self._open_link(pump_name)
 
-    #def _set_active_valve(self, valve):
-    #    #c1 = _InternalControlAction(valve, '_user_status', LinkStatus.Active, 'status')
-    #    c1 = _InternalControlAction(valve, '_internal_status', LinkStatus.Active, 'status')
-    #    condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
-    #    c = mwntr.network.controls.Control(condition=condition, then_action=c1, priority=ControlPriority.very_high)
-    #    self._add_control(c)
-    #    self._register_controls_with_observers()
-    #    self.rebuild_hydraulic_model = True
-
-
-    #def set_valve_opening(self, valve_name, setting):
-    #    if setting < 0 or setting > 1:
-    #        raise ValueError('Valve setting must be between 0 and 1')
-    #    elif setting == 0:
-    #        self.close_valve(valve_name)
-    #    elif setting == 1:
-    #        self.open_valve(valve_name)
-    #    else:
-    #        self.events_history.append((self.get_sim_time(), 'set_valve_opening', (valve_name, setting)))
-    #        valve = self._wn.get_link(valve_name)
-    #        #valve.initial_setting = setting
-    #        #valve._setting = setting
-    #        self._set_active_valve(valve)
-    #        c1 = mwntr.network.controls.ControlAction(valve, "setting", setting)
-    #        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
-    #        c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
-    #        self._add_control(c)
-    #        self._register_controls_with_observers()
-    #        self.rebuild_hydraulic_model = True
-        
     def plot_network(self, title='Water Network Map'):
         mwntr.graphics.plot_interactive_network(self._wn, title=f"{title} - {self._sim_id}", node_labels=True)    
 
@@ -968,6 +938,36 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         return snapshot
 
+        #def _set_active_valve(self, valve):
+    #    #c1 = _InternalControlAction(valve, '_user_status', LinkStatus.Active, 'status')
+    #    c1 = _InternalControlAction(valve, '_internal_status', LinkStatus.Active, 'status')
+    #    condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
+    #    c = mwntr.network.controls.Control(condition=condition, then_action=c1, priority=ControlPriority.very_high)
+    #    self._add_control(c)
+    #    self._register_controls_with_observers()
+    #    self.rebuild_hydraulic_model = True
+
+
+    #def set_valve_opening(self, valve_name, setting):
+    #    if setting < 0 or setting > 1:
+    #        raise ValueError('Valve setting must be between 0 and 1')
+    #    elif setting == 0:
+    #        self.close_valve(valve_name)
+    #    elif setting == 1:
+    #        self.open_valve(valve_name)
+    #    else:
+    #        self.events_history.append((self.get_sim_time(), 'set_valve_opening', (valve_name, setting)))
+    #        valve = self._wn.get_link(valve_name)
+    #        #valve.initial_setting = setting
+    #        #valve._setting = setting
+    #        self._set_active_valve(valve)
+    #        c1 = mwntr.network.controls.ControlAction(valve, "setting", setting)
+    #        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
+    #        c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
+    #        self._add_control(c)
+    #        self._register_controls_with_observers()
+    #        self.rebuild_hydraulic_model = True
+        
     '''
     
     def plot_network_over_time_old(self, data_key, node_labels=True, link_labels=True):
