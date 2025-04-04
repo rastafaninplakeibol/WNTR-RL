@@ -2,7 +2,7 @@ import json
 import math
 import time
 from uuid import uuid4
-from networkx import diameter
+from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 from sympy import Q
@@ -29,13 +29,35 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
     def __init__(self, wn: WaterNetworkModel):
         super().__init__(wn)
         self.initialized_simulation = False
+        self._terminated = False
         self._sim_id = f"{uuid4()}"
         self.events_history = []
+        self._timestep_index = 0
 
     def hydraulic_timestep(self):
         return self._hydraulic_timestep
 
-    def init_simulation(self, solver=None, backup_solver=None, solver_options=None, backup_solver_options=None, convergence_error=False, HW_approx='default', diagnostics=False):
+    @staticmethod
+    def expand_pattern_to_simulation_duration(pattern, time_step=3600, simulation_duration=86400):
+        if time_step > simulation_duration:
+            raise ValueError('Time step must be less than simulation duration')
+        if time_step <= 0:
+            raise ValueError('Time step must be greater than zero')
+        if pattern is None or len(pattern) == 0:
+            raise ValueError('Pattern cannot be None/empty')
+        slots = int(simulation_duration / time_step)
+        pattern_length = len(pattern)
+        new_pattern_length = slots // pattern_length
+        new_pattern = []
+        for p in pattern:
+            new_pattern += [p] * new_pattern_length
+        remaining_slots = slots % pattern_length
+        if remaining_slots > 0:
+            new_pattern.extend([new_pattern[-1]] * remaining_slots)
+
+        return new_pattern
+
+    def init_simulation(self, solver=None, backup_solver=None, solver_options=None, backup_solver_options=None, convergence_error=False, HW_approx='default', diagnostics=False, global_timestep=None, duration=None):
         logger.debug('creating hydraulic model')
         self.mode = self._wn.options.hydraulic.demand_model
         self._model, self._model_updater = mwntr.sim.hydraulics.create_hydraulic_model(wn=self._wn, HW_approx=HW_approx)
@@ -44,6 +66,16 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         if solver is None:
             solver = NewtonSolver
+
+        if global_timestep is not None:
+            self._wn.options.time.hydraulic_timestep = global_timestep
+            self._wn.options.time.pattern_timestep = global_timestep 
+            self._wn.options.time.rule_timestep = global_timestep
+            self._wn.options.time.report_timestep = global_timestep
+            self._wn.options.time.quality_timestep = global_timestep
+
+        if duration is not None:
+            self._wn.options.time.duration = duration
 
         self.diagnostics_enabled = diagnostics
 
@@ -68,6 +100,8 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         self.results.error_code = None
         self.results.time = []
         self.results.network_name = self._wn.name
+        self.results.node = {}
+        self.results.link = {}
 
         self._initialize_internal_graph()
         self._change_tracker.set_reference_point('graph')
@@ -87,17 +121,18 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         self.last_set_results_time = -1
         
-        self._wn.add_pattern('interactive_pattern', [0.1]*24)
+        self._wn.add_pattern('interactive_pattern', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1]))
 
         self.rebuild_hydraulic_model = False
         self.demand_modifications = []
+        self.tank_head_modifications = []
 
         logger.debug('starting simulation')
 
         logger.info('{0:<10}{1:<10}{2:<10}{3:<15}{4:<15}'.format('Sim Time', 'Trial', 'Solver', '# isolated', '# isolated'))
         logger.info('{0:<10}{1:<10}{2:<10}{3:<15}{4:<15}'.format('', '', '# iter', 'junctions', 'links'))
 
-    def save_expected_demand(self):
+    def _save_expected_demand(self):
         expected_demand = self._model.expected_demand
         for node_name, demand in expected_demand.items():
             v = demand.value
@@ -117,9 +152,8 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
     def step_sim(self):
         if not self.initialized_simulation:
             raise RuntimeError('Simulation not initialized. Call init_simulation() before running the simulation.')
-
-        if logger.getEffectiveLevel() <= logging.DEBUG:
-                logger.debug('\n\n')
+        if self._terminated:
+            return
 
         if self._wn.sim_time == 0:
             first_step = True
@@ -202,7 +236,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         if isinstance(self._report_timestep, (float, int)):
             if self._wn.sim_time % self._report_timestep == 0:
                 mwntr.sim.hydraulics.save_results(self._wn, self.node_res, self.link_res)
-                self.save_expected_demand()
+                self._save_expected_demand()
 
                 if len(self.results.time) > 0 and int(self._wn.sim_time) == self.results.time[-1]:
                     if int(self._wn.sim_time) != self._wn.sim_time:
@@ -213,7 +247,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
                 self.results.time.append(int(self._wn.sim_time))
         elif self._report_timestep.upper() == 'ALL':
             mwntr.sim.hydraulics.save_results(self._wn, self.node_res, self.link_res)
-            self.save_expected_demand()
+            self._save_expected_demand()
 
             if len(self.results.time) > 0 and int(self._wn.sim_time) == self.results.time[-1]:
                 raise RuntimeError('Simulation already solved this timestep')
@@ -224,26 +258,40 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         #overstep = float(self._wn.sim_time) % self._hydraulic_timestep
         #self._wn.sim_time -= overstep
 
+        if len(self.demand_modifications) > 0:
+            self._apply_demand_modifications()
+
+        if len(self.tank_head_modifications) > 0:
+            for tank_name, head in self.tank_head_modifications:
+                tank = self._wn.get_node(tank_name)
+                #head = elevation + level
+                #max_level = head - elevation
+                if tank.max_level < (head - tank.elevation):
+                    raise ValueError(f"Tank {tank_name} max level {tank.max_level} is less than {head - tank.elevation}, change max_level before calling init_simulation")
+                tank._head = head
+                tank._prev_head = head
+            self.tank_head_modifications.clear()
+            
+
         if self.rebuild_hydraulic_model:
             self._model, self._model_updater = mwntr.sim.hydraulics.create_hydraulic_model(wn=self._wn, HW_approx=self._hw_approx)
             self.rebuild_hydraulic_model = False
         
-        if len(self.demand_modifications) > 0:
-            self._apply_demand_modifications()
-
         if self._wn.sim_time > self._wn.options.time.duration:
             self._terminated = True
         return
         
     def full_run_sim(self):
-        self.results = self.run_sim()
-        self.last_set_results_time = self._wn.sim_time
+        if not self.initialized_simulation:
+            raise RuntimeError('Simulation not initialized. Call init_simulation() before running the simulation')
+        while not self.is_terminated():
+            self.step_sim()
         return
     
     def is_terminated(self):
         return self._terminated
     
-    def _set_results(self, wn, results: mwntr.sim.results.SimulationResults, node_res, link_res):
+    def _set_results_old(self):
         """
         Parameters
         ----------
@@ -252,27 +300,62 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         node_res: OrderedDict
         link_res: OrderedDict
         """
-        node_names = wn.junction_name_list + wn.tank_name_list + wn.reservoir_name_list
-        link_names = wn.pipe_name_list + wn.head_pump_name_list + wn.power_pump_name_list + wn.valve_name_list
+        node_names = self._wn.junction_name_list + self._wn.tank_name_list + self._wn.reservoir_name_list
+        link_names = self._wn.pipe_name_list + self._wn.head_pump_name_list + self._wn.power_pump_name_list + self._wn.valve_name_list
 
-        self.last_set_results_time = wn.sim_time
+        self.last_set_results_time = self._wn.sim_time
 
-        results.node = {}
-        results.link = {}
+        self.results.node = {}
+        self.results.link = {}
 
-        for key, _ in node_res.items():
-            data = [node_res[key][name] for name in node_names]
-            results.node[key] = pd.DataFrame(data=np.array(data).transpose(), index=results.time,
+        for key, _ in self.node_res.items():
+            data = [self.node_res[key][name] for name in node_names]
+            self.results.node[key] = pd.DataFrame(data=np.array(data).transpose(), index=self.results.time,
                                         columns=node_names)
 
-        for key, _ in link_res.items():
-            results.link[key] = pd.DataFrame(data=np.array([link_res[key][name] for name in link_names]).transpose(), index=results.time,
+        for key, _ in self.link_res.items():
+            self.results.link[key] = pd.DataFrame(data=np.array([self.link_res[key][name] for name in link_names]).transpose(), index=self.results.time,
                                                 columns=link_names)
-        self.results = results
-    
+
+    def _set_results(self):
+        """
+        Ensures all missing timesteps between the last recorded timestep and the current simulation time
+        are stored without gaps.
+        """
+        node_names = self._wn.junction_name_list + self._wn.tank_name_list + self._wn.reservoir_name_list
+        link_names = self._wn.pipe_name_list + self._wn.head_pump_name_list + self._wn.power_pump_name_list + self._wn.valve_name_list
+
+        now = self._wn.sim_time 
+        last_set_results_time = self.last_set_results_time 
+
+        missing_times = [t for t in self.results.time[self._timestep_index:] if last_set_results_time <= t <= now]
+
+        if not missing_times:
+            return 
+
+        for key in self.node_res.keys():
+            new_data = np.array([self.node_res[key][name][self._timestep_index:] for name in node_names])
+            new_rows = pd.DataFrame(new_data.transpose(), index=missing_times, columns=node_names)
+            if key in self.results.node:
+                self.results.node[key] = pd.concat([self.results.node[key], new_rows])
+            else:
+                self.results.node[key] = new_rows
+
+        # Fill in missing link values
+        for key in self.link_res.keys():
+            new_data = np.array([self.link_res[key][name][self._timestep_index:] for name in link_names])
+            new_rows = pd.DataFrame(new_data.transpose(), index=missing_times, columns=link_names)
+            if key in self.results.link:
+                self.results.link[key] = pd.concat([self.results.link[key], new_rows])
+            else:
+                self.results.link[key] = new_rows
+
+        self._timestep_index = len(self.results.time)
+        self.last_set_results_time = now
+
     def get_results(self):
         if self.last_set_results_time != self._wn.sim_time:
-            self._set_results(self._wn, self.results, self.node_res, self.link_res)
+            self._set_results()
         return self.results
     
     def get_sim_time(self):
@@ -348,21 +431,43 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         self.events_history.append((self.get_sim_time(), 'open_pump', (pump_name)))
         self._open_link(pump_name)
 
-    def plot_network(self, title='Water Network Map'):
-        mwntr.graphics.plot_interactive_network(self._wn, title=f"{title} - {self._sim_id}", node_labels=True)    
+    def set_tank_head(self, tank_name, head):
+        self.events_history.append((self.get_sim_time(), 'set_tank_head', (tank_name, head)))
+        self.tank_head_modifications.append((tank_name, head))
+        #self.rebuild_hydraulic_model = True     
+
+    def set_pump_head_curve(self, pump_name, head_curve):
+        self.events_history.append((self.get_sim_time(), 'set_pump_head_curve', (pump_name, head_curve)))
+        pump = self._wn.get_link(pump_name)
+        if pump.pump_type == 'POWER':
+            raise ValueError('Cannot head curve for power pump')
+        
+        if type(head_curve) == str:
+            pump.pump_curve_name = head_curve
+        elif type(head_curve) == list[tuple[int, int]]:
+            name = f"{pump_name}_Curve_{uuid4()}"
+            self._wn.add_curve(name, 'HEAD' , head_curve)  # Head vs. Flow
+            pump.pump_curve_name = name
+
+        self.rebuild_hydraulic_model = True
+    
+    def set_pump_speed_pattern(self, pump_name, speed_pattern):
+        self.events_history.append((self.get_sim_time(), 'set_pump_speed_pattern', (pump_name, speed_pattern)))
+        pump = self._wn.get_link(pump_name)
+        pump.speed_pattern_name = speed_pattern
+        self.rebuild_hydraulic_model = True
+    
+    def set_pump_speed(self, pump_name, speed):
+        self.events_history.append((self.get_sim_time(), 'set_pump_speed', (pump_name, speed)))
+        pump = self._wn.get_link(pump_name)
+        pump.base_speed = speed
+        #self.rebuild_hydraulic_model = True
+
+    def plot_network(self, title='Water Network Map', node_labels=True, link_labels=True):
+        mwntr.graphics.plot_interactive_network(self._wn, title=f"{title} - {self._sim_id}", node_labels=node_labels, link_labels=link_labels)    
 
     def _create_base_figure(self, node_positions, edge_list, node_color_0, edge_color_0,
-                        node_hover_0, edge_hover_0, edge_names, key, max_value, min_value, node_labels=True, link_labels=True):
-        """
-        node_positions: dict of node_name -> (x, y)
-        edge_list: list of edges, each a tuple (start_node, end_node)
-        node_color_0: array of node colors for time 0
-        edge_color_0: single color or array for edges at time 0
-        node_hover_0: array of hover text strings for nodes at time 0
-        edge_hover_0: array of hover text strings for edges at time 0
-        edge_names: initial list of annotations for edges
-        """
-
+                        node_hover_0, edge_hover_0, edge_names, node_key, link_key, node_max_value, node_min_value, link_min_value, link_max_value, node_labels=True, link_labels=True):
         # Build node trace (single scatter for all nodes)
         node_x = []
         node_y = []
@@ -379,10 +484,10 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
             marker=dict(
                 size=30,
                 color=node_color_0,
-                colorscale='Viridis',
-                colorbar=dict(title=f"{key.capitalize()}"),
-                cmax=max_value,
-                cmin=min_value,
+                colorscale='viridis_r' if node_key is not None else None,
+                colorbar=dict(title=f"{node_key.capitalize()}" if node_key is not None else None),
+                cmax=node_max_value if node_key is not None else None,
+                cmin=node_min_value if node_key is not None else None,
             ),
             text=node_text,
             hovertext=node_hover_0,
@@ -393,26 +498,33 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
 
         edge_traces = []
+
         for i, (start, end) in enumerate(edge_list):
             sx, sy = node_positions[start]
             ex, ey = node_positions[end]
             edge_x = [sx, ex]
             edge_y = [sy, ey]
+
             edge_trace = go.Scatter(
                 x=edge_x,
                 y=edge_y,
-                mode='lines',
-                line=dict(color=edge_color_0[i], width=1),
-                # If you have a single color for all edges:
-                # or if edge_color_0 is e.g. 'black' or a single hex
+                mode='lines+markers',
+                line=dict(
+                    color=edge_color_0[i], 
+                    width=2, 
+                ),
+                marker=dict(
+                    colorscale='Viridis_r' ,
+                    colorbar=dict(title=f"{link_key.capitalize()}", x=-0.1 if node_key is not None else None, y = 5 if node_key is not None else None),
+                    cmax=link_max_value,
+                    cmin=link_min_value,
+                ) if link_key is not None and i == 0 else None,  # invisible
                 hoverinfo='none',
                 name='Edges',
                 showlegend=False
             )
             edge_traces.append(edge_trace)
 
-        # (Optional) If you want hover text at edge midpoints:
-        # build a small marker trace
         mid_x = []
         mid_y = []
         mid_hover = []
@@ -450,11 +562,23 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         )
 
         # Build the base layout with the initial annotations
+
+        title = ""
+        if node_key is not None:
+            title += f"{node_key.capitalize()} "
+        if link_key is not None:
+            title += f"& {link_key.capitalize()} "
+        title += "Over Time"
+
         layout = go.Layout(
-            title=f"{key.capitalize()} Over Time",
+            title=title,
             xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
             yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
             hovermode='closest',
+            width=1920,
+            height=1080,
+            #width=1200,
+            #height=800,
             annotations=annotations
         )
 
@@ -465,6 +589,16 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         data.append(node_trace)
 
         fig = go.Figure(data=data, layout=layout)
+        fig.update_traces(line=dict(width=4))  # Adjust width as needed
+        fig.update_layout(
+            font=dict(
+                # You can choose a font that inherently includes a bold style, such as "Arial Black"
+                #family="Arial Black",
+                weight="bold",
+                size=23  # Make fonts larger
+            )
+        )
+
         return fig, annotations
 
     def _build_frames(self, timesteps, node_color_map, node_hover_map,
@@ -534,45 +668,72 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         return frames
 
-    def plot_network_over_time(self, data_key, node_labels=True, link_labels=True):
-
-        #before = time.time()
-
+    def plot_network_over_time(self, node_key=None, link_key=None, node_labels=True, link_labels=True):
         results = self.get_results()
-        data_over_time = {}
+        node_data_over_time = {}
+        edge_data_over_time = {}
         node_hover_map = {}
         edge_hover_map = {}
-        edge_color_map = {}
 
-        global_maximum = -np.inf
-        global_minimum = np.inf
+        node_value_global_maximum = -np.inf
+        node_value_global_minimum = np.inf
+
+        link_value_global_maximum = -np.inf
+        link_value_global_minimum = np.inf
 
         for t in results.time:
-            data_over_time[t] = []
+            node_data_over_time[t] = []
+            edge_data_over_time[t] = []
+            
             node_hover_map[t] = []
             edge_hover_map[t] = []
-            edge_color_map[t] = []
 
-            for node in self._wn.nodes():
-                v = results.node[data_key][node[0]][t]
-                if v > global_maximum:
-                    global_maximum = v
-                if v < global_minimum:
-                    global_minimum = v
-                data_over_time[t].append(v)
+
+            for node in self._wn.nodes(): 
+                if node_key is not None and node[1].node_type != "Reservoir" and node[1].node_type != "Tank":
+                    v = results.node[node_key][node[0]][t]
+                    if v > node_value_global_maximum:
+                        node_value_global_maximum = v
+                    if v < node_value_global_minimum:
+                        node_value_global_minimum = v
+                    node_data_over_time[t].append(v)
+                else:
+                    node_data_over_time[t].append('black')
+                
                 info = f"Node: {node[0]}"
                 for k in results.node.keys():
                     info += f"<br>{k}: {results.node[k][node[0]][t]:.4f}"
                 node_hover_map[t].append(info)
 
+
+
             for (name, link) in self._wn.links():
+                if link_key is not None:
+                    v = results.link[link_key][name][t]
+                    if v > link_value_global_maximum:
+                        link_value_global_maximum = v
+                    if v < link_value_global_minimum:
+                        link_value_global_minimum = v
+                    edge_data_over_time[t].append(v)
+                else:
+                    edge_data_over_time[t].append('black')
+
                 start = link.start_node_name
                 end = link.end_node_name
                 info = f"Edge {name}: {start} - {end}"
                 for k in results.link.keys():
                     info += f"<br>{k}: {results.link[k][name][t]:.4f}"
                 edge_hover_map[t].append(info)
-                edge_color_map[t].append('black')
+                #edge_color_map[t].append('black')
+            
+            if link_key is not None:
+                cmap = plt.get_cmap('viridis_r')
+                for i, v in enumerate(edge_data_over_time[t]):
+                    edge_color_scaled = (v - link_value_global_minimum) / (link_value_global_maximum - link_value_global_minimum)
+                    r, g, b, a = cmap(edge_color_scaled)
+                    edge_data_over_time[t][i] = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+
+
 
         node_positions = {}
         for node in self._wn.nodes():
@@ -586,14 +747,17 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         fig, annotations = self._create_base_figure(
             node_positions=node_positions,
             edge_list=edges,
-            node_color_0=data_over_time[times[0]],
-            edge_color_0=edge_color_map[times[0]],
+            node_color_0=node_data_over_time[times[0]],
+            edge_color_0=edge_data_over_time[times[0]],
             node_hover_0=node_hover_map[times[0]],
             edge_hover_0=edge_hover_map[times[0]],
             edge_names=edges_names,
-            key=data_key,
-            max_value=global_maximum,
-            min_value=global_minimum,
+            node_key=node_key,
+            link_key=link_key,
+            node_max_value=node_value_global_maximum,
+            node_min_value=node_value_global_minimum,
+            link_max_value=link_value_global_maximum,
+            link_min_value=link_value_global_minimum,
             node_labels=node_labels,
             link_labels=link_labels,
         )
@@ -601,9 +765,9 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         # Build frames
         frames = self._build_frames(
             timesteps=times,
-            node_color_map=data_over_time,
+            node_color_map=node_data_over_time,
             node_hover_map=node_hover_map,
-            edge_color_map=edge_color_map,
+            edge_color_map=edge_data_over_time,
             edge_hover_map=edge_hover_map,
             annotations=annotations,
             num_edges=len(edges),
@@ -673,11 +837,12 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         for action, *args in self.demand_modifications:
             if action == 'add':
                 node_name, base_demand, name, category = args
-                if name is None:
-                    name = 'interactive_pattern'
                 node = self._wn.get_node(node_name)
-                node._pattern_reg.add_usage(name, (node.name, 'Junction'))
-                node.demand_timeseries_list.append((base_demand, name, category))
+                if name is None:
+                    node.demand_timeseries_list[0].base_value = base_demand
+                else:
+                    node._pattern_reg.add_usage(name, (node.name, 'Junction'))
+                    node.demand_timeseries_list.append((base_demand, name, category))
             elif action == 'remove':
                 node_name, name = args
                 if name is None:
@@ -689,11 +854,29 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
                         node.demand_timeseries_list.remove(ts)
         self.demand_modifications.clear()
 
+    def start_outage(self, pump_list=None):
+        if pump_list is None:
+            pump_list = self._wn.pump_name_list
+        for pump_name in pump_list:
+            self.close_pump(pump_name)
+    
+    def end_outage(self, pump_list=None):
+        if pump_list is None:
+            pump_list = self._wn.pump_name_list
+        for pump_name in pump_list:
+            self.open_pump(pump_name)
+
+    def set_pipe_diameter(self, pipe_name, diameter):
+        self.events_history.append((self.get_sim_time(), 'set_pipe_diameter', (pipe_name, diameter)))
+        pipe = self._wn.get_link(pipe_name)
+        pipe.diameter = diameter
+        self.rebuild_hydraulic_model = True
+
     def remove_demand(self, node_name, name=None):
         self.events_history.append((self.get_sim_time(), 'remove_demand', (node_name, name)))
         self.demand_modifications.append(('remove', node_name, name))
 
-    def toggle_demand(self, node_name, base_demand=0.0, name=None, category=None):
+    def change_demand(self, node_name, base_demand=0.0, name=None, category=None):
         node = self._wn.get_node(node_name)
         for ts in node.demand_timeseries_list._list:
             if ts.pattern_name == name:
@@ -772,11 +955,30 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
             print('No results to plot')
             return
         fig = px.line(data, x=data.index, y=data.columns, title=f'{key.capitalize()} at nodes over time - {self._sim_id}')
+        fig.update_traces(line=dict(width=4))  # Adjust width as needed
+        fig.update_layout(
+            font=dict(
+                # You can choose a font that inherently includes a bold style, such as "Arial Black"
+                #family="Arial Black",
+                weight="bold",
+                size=23  # Make fonts larger
+            ),
+            xaxis=dict(
+                title=dict(
+                    text="Time"
+                )
+            ),
+            yaxis=dict(
+                title=dict(
+                    text=key.capitalize()
+                )
+            ),
+        )
         if show_events:
             for time, action, args in self.events_history:
                 color = '#'+str(hex(hash(action+str(args)) % 16777215)[2:].zfill(6))
                 line_style = 'solid' if 'create_branch' in action else 'dash'
-                fig.add_vline(x=time, line_dash=line_style, line_color=color, annotation_text='  ', annotation_hovertext=f'{action}({args})')           
+                fig.add_vline(x=time, line_dash=line_style, line_color=color, annotation_text='  ', annotation_hovertext=f'{action}{args}', line_width=4)           
         fig.show()
 
     def _compute_feature_ranges(self, nodes_features, edges_features):
@@ -866,7 +1068,6 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         edges_always_valued_features = ['flow']
 
         feature_ranges = self._compute_feature_ranges(nodes_features, edges_features)
-        print(feature_ranges)
 
         for n in nodes:
             node_data = {}
@@ -939,273 +1140,72 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
         return snapshot
 
         #def _set_active_valve(self, valve):
-    #    #c1 = _InternalControlAction(valve, '_user_status', LinkStatus.Active, 'status')
-    #    c1 = _InternalControlAction(valve, '_internal_status', LinkStatus.Active, 'status')
-    #    condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time()  + self.hydraulic_timestep())
-    #    c = mwntr.network.controls.Control(condition=condition, then_action=c1, priority=ControlPriority.very_high)
-    #    self._add_control(c)
-    #    self._register_controls_with_observers()
-    #    self.rebuild_hydraulic_model = True
 
+    def _calculate_b1(self):
+        nodes = self._wn.node_name_list
+        links = self._wn.link_name_list
 
-    #def set_valve_opening(self, valve_name, setting):
-    #    if setting < 0 or setting > 1:
-    #        raise ValueError('Valve setting must be between 0 and 1')
-    #    elif setting == 0:
-    #        self.close_valve(valve_name)
-    #    elif setting == 1:
-    #        self.open_valve(valve_name)
-    #    else:
-    #        self.events_history.append((self.get_sim_time(), 'set_valve_opening', (valve_name, setting)))
-    #        valve = self._wn.get_link(valve_name)
-    #        #valve.initial_setting = setting
-    #        #valve._setting = setting
-    #        self._set_active_valve(valve)
-    #        c1 = mwntr.network.controls.ControlAction(valve, "setting", setting)
-    #        condition = mwntr.network.controls.SimTimeCondition(self._wn, "=", self.get_sim_time() + self.hydraulic_timestep())
-    #        c = mwntr.network.controls.Control(condition=condition, then_action=c1) 
-    #        self._add_control(c)
-    #        self._register_controls_with_observers()
-    #        self.rebuild_hydraulic_model = True
+        B1 = np.zeros((len(nodes), len(links)))
+        node_idx = {name: i for i, name in enumerate(nodes)}
+        link_idx = {name: j for j, name in enumerate(links)}
+
+        for link in links:
+            l = self._wn.get_link(link)
+            start = l.start_node_name
+            end = l.end_node_name
+
+            reversed = False if l.flow >= 0 else True
+
+            if start in node_idx:  # Only consider junctions
+                B1[node_idx[start], link_idx[link]] = -1 if not reversed else 1
+            if end in node_idx:
+                B1[node_idx[end], link_idx[link]] = 1 if not reversed else -1
         
-    '''
-    
-    def plot_network_over_time_old(self, data_key, node_labels=True, link_labels=True):
-        start_time = time.time()
+        return B1
 
-        node_positions = {}
-        for node in self._wn.nodes():
-            node_positions[node[0]] = (node[1].coordinates[0], node[1].coordinates[1])
-
-        edges = [(link[0], (link[1].start_node_name, link[1].end_node_name)) for link in self._wn.links()]
-
-        data_over_time = {}
+    def _calculate_f(self):
+        links = self._wn.link_name_list
         results = self.get_results()
-        node_hover_text = {}
-        edge_hover_text = {}
+        time_index = results.time[-1]
+        return np.abs(results.link['flowrate'].loc[time_index, links].values)
+    
+    def _calculate_d(self):
+        nodes = self._wn.node_name_list
+        results = self.get_results()
+        time_index = results.time[-1]
+        return results.node['demand'].loc[time_index, nodes].values
+    
+    def check_mass_balance(self):
+        '''
+        B1:
+            - N righe (numero di nodi)
+            - E colonne (numero di edge)
+            - Nella colonna Iesima abbiamo:
+                - -1 sul nodo da cui entra l'acqua
+                -  1 sul nodo da esce l'acqua 
 
-        for t in results.time:
-            data_over_time[t] = {}
-            node_hover_text[t] = []
-            edge_hover_text[t] = []
+        F:
+            - Vettore colonna in cui abbiamo i flussi nello stesso identico ordine
+            delle colonne della matrice B1
 
-            for node in self._wn.nodes():
-                data_over_time[t][node[0]] = results.node[data_key][node[0]][t]
-                info = f"Node: {node[0]}"
-                for k in results.node.keys():
-                    info += f"<br>{k}: {results.node[k][node[0]][t]:.4f}"
-                node_hover_text[t].append(info)
+        D:
+            - le demand che devono avere l'ordine delle righe di B1
 
-            for (name, link) in self._wn.links():
-                start = link.start_node_name
-                end = link.end_node_name
-                info = f"Edge {name}: {start} - {end}"
-                for k in results.link.keys():
-                    info += f"<br>{k}: {results.link[k][name][t]:.4f}"
-                edge_hover_text[t].append(info)
+        B1 * F - D = matrice tutti 0 -> altrimenti non funziona qualcosa.
+        '''
+        B1 = self._calculate_b1()
+        F = self._calculate_f()
+        D = self._calculate_d()
+        conservation = B1 @ F - D
 
+        nodes = self._wn.node_name_list
+        conservation = pd.Series(conservation, index=nodes)
+        filtered = {}
+        for k, v in conservation.items():
+            if abs(v) > 1e-10:
+                filtered[k] = v
+        print("Conservation residuals > 1e-10:")
+        print(pd.Series(filtered))
 
-
-        # Base node trace (for initial frame)
-        node_x = [node_positions[n][0] for n in node_positions]
-        node_y = [node_positions[n][1] for n in node_positions]
-        initial_data = [data_over_time[results.time[0]][n] for n in node_positions]
-
-        node_trace = go.Scatter(
-            x=node_x,
-            y=node_y,
-            mode='markers+text' if node_labels else 'markers',
-            text=list(node_positions.keys()),
-            hovertext=node_hover_text[0],
-            hoverinfo='text',
-            marker=dict(
-                size=20,
-                color=initial_data,  # Use data as color
-                colorscale='Viridis',
-                colorbar=dict(title=data_key.capitalize())
-            ),
-            name='Nodes',
-            showlegend=False  # Hides legend for nodes
-        )
-
-        edge_traces = []
-        initial_annotations = []
-        for i,(name, (start, end)) in enumerate(edges):
-            x0, y0 = node_positions[start]
-            x1, y1 = node_positions[end]
-
-            mx, my = (x0 + x1)/2, (y0 + y1)/2
-            edge_trace = go.Scatter(
-                x=[x0, x1],
-                y=[y0, y1],
-                mode='lines',
-                line=dict(color='black', width=1),
-                name='Edges',
-                showlegend=False  # Hides legend for edges
-            )
-
-            midpoint_marker = go.Scatter(
-                x=[mx],
-                y=[my],
-                mode='markers',
-                marker=dict(size=20, color='rgba(0, 0, 0, 0)'),  # invisible
-                hoverinfo='text',
-                hovertext=[edge_hover_text[0][i]],
-                showlegend=False
-            )
-
-            edge_traces += [edge_trace, midpoint_marker]
-
-
-            if link_labels:
-                initial_annotations.append(dict(
-                    x=mx,
-                    y=my,
-                    xref="x",
-                    yref="y",
-                    text=name,
-                    showarrow=False,
-                    font=dict(size=12, color='black'),
-                    bgcolor="#e5ecf6",
-                    align="center"
-                ))
-
-                
-
-        # Create frames for each timestep
-        frames = []
-        for t in sorted(data_over_time.keys()):
-            data_at_t = [data_over_time[t][n] for n in node_positions]
-            # Update hover text for nodes per frame if desired.
-            # For a starting point, we'll reuse the same hover text;
-            # you can modify this to include time-dependent information.
-            frame_node = go.Scatter(
-                x=node_x,
-                y=node_y,
-                mode='markers+text' if node_labels else 'markers',
-                text=list(node_positions.keys()),
-                hovertext=node_hover_text[t],
-                hoverinfo='text',
-                marker=dict(
-                    size=20,
-                    color=data_at_t,
-                    colorscale='Viridis',
-                    colorbar=dict(title=data_key.capitalize())
-                ),
-                name="Nodes",
-                showlegend=False
-            )
-            frame_edges_traces = []
-            annotations = []
-
-            for i,(name, (start, end)) in enumerate(edges):
-                x0, y0 = node_positions[start]
-                x1, y1 = node_positions[end]
-
-                edge_trace = go.Scatter(
-                    x=[x0, x1],
-                    y=[y0, y1],
-                    mode='lines',
-                    line=dict(color='black', width=1),
-                    name='Edges',
-                    showlegend=False  # Hides legend for edges
-                )
-                midpoint_marker = go.Scatter(
-                        x=[mx],
-                        y=[my],
-                        mode='markers',
-                        marker=dict(size=20, color='rgba(0, 0, 0, 0)'),  # invisible
-                        hoverinfo='text',
-                        hovertext=[edge_hover_text[t][i]],
-                        showlegend=False
-                    )
-
-                frame_edges_traces += [edge_trace, midpoint_marker]
-
-
-                if link_labels:
-                    mx, my = (x0 + x1)/2, (y0 + y1)/2
-                    annotations.append(dict(
-                        x=mx,
-                        y=my,
-                        xref="x",
-                        yref="y",
-                        text=name,
-                        showarrow=False,
-                        font=dict(size=12, color='black'),
-                        bgcolor="#e5ecf6",          # background color
-                        align="center"
-                    ))
-                
-            frame = go.Frame(
-                data= frame_edges_traces + [frame_node],
-                name=str(t),
-                layout=go.Layout(annotations=annotations)
-            )
-            frames.append(frame)
-
-        # Layout with slider settings; remove the legend config to hide trace labels.
-        layout = go.Layout(
-            title=f"{data_key.capitalize()} Over Time",
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            hovermode='closest',
-            annotations=initial_annotations,
-            updatemenus=[
-                dict(
-                    type='buttons',
-                    showactive=False,
-                    y=1,
-                    x=1.2,
-                    xanchor='right',
-                    yanchor='top',
-                    pad=dict(t=0, r=10),
-                    buttons=[
-                        dict(
-                            label='Play',
-                            method='animate',
-                            args=[None, dict(
-                                frame=dict(duration=250, redraw=False),
-                                transition=dict(duration=0),
-                                fromcurrent=True,
-                                mode='immediate'
-                            )]
-                        ),
-                        dict(
-                            label='Pause',
-                            method='animate',
-                            args=[[None], dict(
-                                frame=dict(duration=0, redraw=False),
-                                transition=dict(duration=0),
-                                mode='immediate'
-                            )]
-                        )
-                    ]
-                )
-            ],
-            sliders=[dict(
-                active=0,
-                currentvalue=dict(prefix="Time: "),
-                pad=dict(t=50),
-                steps=[
-                    dict(
-                        label=str(t),
-                        method='animate',
-                        args=[[str(t)], dict(
-                            frame=dict(duration=250, redraw=True),
-                            transition=dict(duration=0),
-                            mode='immediate'
-                        )]
-                    ) for t in sorted(data_over_time.keys())
-                ]
-            )]
-        )
-
-        data = edge_traces + [node_trace]
-        fig = go.Figure(data=data, layout=layout, frames=frames)
-
-        end_time = time.time()
-        print(f"Time to create plot: {end_time - start_time} seconds")
-        fig.show()
-
-    '''
+        max_error = np.max(np.abs(conservation))
+        print(f"Max imbalance at any node: {max_error}")
