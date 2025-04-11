@@ -180,60 +180,69 @@ def main():
         node_list = wn.junction_name_list
         link_list = wn.link_name_list
 
-        while not sim.is_terminated():
-            #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
-            current_time = sim.get_sim_time()
+        try:
 
-            r = random.random()
-            if r < 0.05:
-                r2 = random.random()
-                if r2 < 0.3:
-                    if len(has_active_leak) == 0 or random.random() < 0.5:    
-                        node = random.choice(node_list)
-                        sim.start_leak(node, 0.1)
-                        has_active_leak.append(node)
-                        print(f"Leak started on {node}")
-                    else:
-                        node = random.choice(has_active_leak)
-                        sim.stop_leak(node)
-                        has_active_leak.remove(node)
-                        print(f"Leak stopped on {node}")
-                elif r2 < 0.6:
-                    if len(has_active_demand) == 0 or random.random() < 0.5:    
-                        node = random.choice(node_list)
-                        sim.change_demand(node, 1, name='ptn_1')
-                        has_active_demand.append(node)
-                        print(f"Demand added on {node}")
-                    else:
-                        node = random.choice(has_active_demand)
-                        sim.change_demand(node)
-                        has_active_demand.remove(node)
-                        print(f"Demand removed on {node}")
-                else:
-                    if len(closed_pipe) == 0 or random.random() < 0.5:    
-                        link = random.choice(link_list)
-                        sim.close_pipe(link)
-                        closed_pipe.append(link)
-                        print(f"Pipe closed {link}")
-                    else:
-                        link = random.choice(closed_pipe)
-                        sim.open_pipe(link)
-                        closed_pipe.remove(link)
-                        print(f"Pipe opened {link}")
+            while not sim.is_terminated():
+                #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
+                current_time = sim.get_sim_time()
 
-            for s in sims:
-                s.step_sim()
+                r = random.random()
+                if r < 0.05:
+                    r2 = random.random()
+                    if r2 < 0.3:
+                        if len(has_active_leak) == 0 or random.random() < 0.5:    
+                            node = random.choice(node_list)
+                            sim.start_leak(node, 0.1)
+                            has_active_leak.append(node)
+                            print(f"Leak started on {node}")
+                        else:
+                            node = random.choice(has_active_leak)
+                            sim.stop_leak(node)
+                            has_active_leak.remove(node)
+                            print(f"Leak stopped on {node}")
+                    elif r2 < 0.6:
+                        if len(has_active_demand) == 0 or random.random() < 0.5:    
+                            node = random.choice(node_list)
+                            sim.change_demand(node, 1, name='ptn_1')
+                            has_active_demand.append(node)
+                            print(f"Demand added on {node}")
+                        else:
+                            node = random.choice(has_active_demand)
+                            sim.change_demand(node)
+                            has_active_demand.remove(node)
+                            print(f"Demand removed on {node}")
+                    else:
+                        if len(closed_pipe) == 0 or random.random() < 0.5:    
+                            link = random.choice(link_list)
+                            sim.close_pipe(link)
+                            closed_pipe.append(link)
+                            print(f"Pipe closed {link}")
+                        else:
+                            link = random.choice(closed_pipe)
+                            sim.open_pipe(link)
+                            closed_pipe.remove(link)
+                            print(f"Pipe opened {link}")
 
-        end = time.time()
-        #print(f"Elapsed time: {end - start}")
-        
-        
-        if sim.get_sim_time() >= one_day_in_seconds:
-            sim.dump_results_to_csv()
-            i += 1
-            print(f"Simulation {i} completed in {end - start} seconds.")
-        else:
-            print("Simulation terminated before reaching the end time.")
+                #for s in sims:
+                #    s.step_sim()
+                sim.step_sim()
+
+            end = time.time()
+            #print(f"Elapsed time: {end - start}")
+            
+            
+            if sim.get_sim_time() >= one_day_in_seconds - global_timestep:
+                sim.dump_results_to_csv()
+                i += 1
+                print(f"Simulation {i} completed in {end - start} seconds.")
+            else:
+                print("Simulation terminated before reaching the end time.")
+
+        except:
+            print("An error occurred during the simulation.")
+            #for s in sims:
+            #    s.dump_results_to_csv()
+            #sys.exit()
     
 
 
