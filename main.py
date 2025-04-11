@@ -136,64 +136,130 @@ def create_new_water_model():
 
     return wn
 
-one_day_in_seconds = 86400
-global_timestep = 60
-
-#wn = mwntr.network.WaterNetworkModel('NET_2.inp')
-#wn = mwntr.network.WaterNetworkModel('NET_4.inp')
-#wn = mwntr.network.WaterNetworkModel('L-TOWN_Real.inp')
-wn = create_water_network_model()
-#wn.add_pattern('house1_pattern', pattern_house1)
-
-#wn.get_node('R1').max_level = 600
-
-sim = MWNTRInteractiveSimulator(wn)
 
 
-#sys.exit()
+def main():
+    one_day_in_seconds = 86400
+    global_timestep = 5
 
-sim.init_simulation(duration=one_day_in_seconds, global_timestep=global_timestep)
+    #wn = mwntr.network.WaterNetworkModel('NET_2.inp')
+    wn = mwntr.network.WaterNetworkModel('NET_4.inp')
+    #wn = mwntr.network.WaterNetworkModel('L-TOWN_Real.inp')
+    #wn = mwntr.network.WaterNetworkModel("Modelli Belmonte Castel Sant'Angelo_2024-09-05_0850/Modello_Castel'Sant'Angelo/_Modelli idraulici/Pacchetto_CSA/CSA_Base.inp")
+    #wn = mwntr.network.WaterNetworkModel("Modelli Belmonte Castel Sant'Angelo_2024-09-05_0850/Modello Belmonte/Modelli_MIKE/SDF/BELMONTE_DHIBase.inp")
+    #wn = create_water_network_model()
 
-branched_sim_1 = None
-branched_sim_2 = None
+    wn.add_pattern('house1_pattern', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,5,1], global_timestep, simulation_duration=one_day_in_seconds))
 
-start = time.time()
+    #wn.get_node('R1').max_level = 600
 
-#sim.plot_network()
-sims = [sim]
-
-has_active_leak = []
-has_active_demand = []
-
-wn.add_pattern('ptn_1', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,3,5,3,1], global_timestep, simulation_duration=one_day_in_seconds))
+    sim = MWNTRInteractiveSimulator(wn)
 
 
-while not sim.is_terminated():
-    #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
-    current_time = sim.get_sim_time()
+    #sys.exit()
 
-    #r = random.random()
-    #if r < 0.01:
-    #
-    #    r2 = random.random()
-    #    if r2 < 0.5:
-    #        sim.start_leak('J1', 0.1)
-    #        has_active_leak.append('J1')
-    #
-    #    sim.start_leak('J8', 0.1)
-    #    has_active_leak.append('J8')
+    sim.init_simulation(duration=one_day_in_seconds, global_timestep=global_timestep)
 
-    if sim.get_sim_time() == sim.hydraulic_timestep() * 1:
-        #sim.start_leak('H1', 0.1, name='ptn_1')
-        sim.change_demand('H1', 1, name='ptn_1')
-        #sim.check_mass_balance()
+    branched_sim_1 = None
+    branched_sim_2 = None
 
-    if sim.get_sim_time() == sim.hydraulic_timestep() * 60:
-        sim.set_tank_head('R1', 300)
+    start = time.time()
+
+    #sim.plot_network()
+    sims = [sim]
+
+    has_active_leak = []
+    has_active_demand = []
+    closed_pipe = []
+
+    wn.add_pattern('ptn_1', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,3,5,3,1], global_timestep, simulation_duration=one_day_in_seconds))
+
+    node_list = wn.junction_name_list
+    link_list = wn.link_name_list
+
+    while not sim.is_terminated():
+        #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
+        current_time = sim.get_sim_time()
+
+        r = random.random()
+        if r < 0.05:
+            r2 = random.random()
+            if r2 < 0.3:
+                if len(has_active_leak) == 0 or random.random() < 0.5:    
+                    node = random.choice(node_list)
+                    sim.start_leak(node, 0.1)
+                    has_active_leak.append(node)
+                else:
+                    node = random.choice(has_active_leak)
+                    sim.stop_leak(node)
+                    has_active_leak.remove(node)
+            elif r2 < 0.6:
+                if len(has_active_demand) == 0 or random.random() < 0.5:    
+                    node = random.choice(node_list)
+                    sim.change_demand(node, 1, name='ptn_1')
+                    has_active_demand.append(node)
+                else:
+                    node = random.choice(has_active_demand)
+                    sim.change_demand(node)
+                    has_active_demand.remove(node)
+            else:
+                if len(closed_pipe) == 0 or random.random() < 0.5:    
+                    link = random.choice(link_list)
+                    sim.close_pipe(link)
+                    closed_pipe.append(link)
+                else:
+                    link = random.choice(closed_pipe)
+                    sim.open_pipe(link)
+                    closed_pipe.remove(link)
+                
+
+    
+
+        for s in sims:
+            s.step_sim()
+
+    end = time.time()
+    print(f"Elapsed time: {end - start}")
     
     
-    if sim.get_sim_time() == sim.hydraulic_timestep() * 90:
-        sim.set_tank_head('R1', 2000)
+    if sim.get_sim_time() >= one_day_in_seconds:
+        sim.dump_results_to_csv()
+        return True
+    return False
+
+    #sim.plot_network(link_labels=False, node_labels=True)
+    #sim.plot_results('node','pressure')
+    #sim.plot_results('node','demand')
+    #sim.plot_results('node','satisfied_demand')
+    #sim.plot_results('link','flowrate')
+    #sim.plot_network_over_time(node_key='satisfied_demand', link_key='flowrate', node_labels=True, link_labels=False)
+    #sim.plot_results('node','pressure')
+    #sim.plot_results('link','flowrate')
+    #sim.plot_results('node','demand')
+    #sim.plot_network_over_time(node_key='pressure', link_key='flowrate', node_labels=True, link_labels=False)
+
+
+i = 0
+while i < 100:
+    ok = main()
+    if ok:
+        i += 1
+
+
+
+'''
+
+     #if sim.get_sim_time() == sim.hydraulic_timestep() * 1:
+    #    #sim.start_leak('H1', 0.1, name='ptn_1')
+    #    sim.change_demand('H1', 1, name='ptn_1')
+    #    #sim.check_mass_balance()
+    #
+    #if sim.get_sim_time() == sim.hydraulic_timestep() * 60:
+    #    sim.set_tank_head('R1', 300)
+    #
+    #
+    #if sim.get_sim_time() == sim.hydraulic_timestep() * 90:
+    #    sim.set_tank_head('R1', 2000)
 
     #if sim.hydraulic_timestep() * 5 <= current_time <= sim.hydraulic_timestep() * 35: 
     #    print(f"Diameter: { sim._wn.get_link('PR8').diameter }")
@@ -210,39 +276,28 @@ while not sim.is_terminated():
     #if current_time == sim.hydraulic_timestep() * 1:
     #    sim.change_demand('22', 1.1, name='house1_pattern')
     #    sim.change_demand('14', 1, name='house1_pattern')
-#
+    #
     #
     #if current_time == sim.hydraulic_timestep() * 25:
-    #    sim.start_leak('30', 0.01)
+    #    sim.start_leak('16', 0.01)
     #
     #if current_time == sim.hydraulic_timestep() * 35:
     #    sim.change_demand('14', name='house1_pattern')
     #
     #if current_time == sim.hydraulic_timestep() * 75:
-    #    sim.stop_leak('30')
-
-    for s in sims:
-        s.step_sim()
-
-
-end = time.time()
-print(f"Elapsed time: {end - start}")
-
-#sim.plot_network(link_labels=False, node_labels=True)
-
-#sim.plot_results('node','pressure', ['22', '14', '30'])
-#sim.plot_results('node','demand', ['22', '14'])
-#sim.plot_results('link','flowrate', ['10101', '10123', '10127'])
-#sim.plot_network_over_time(node_key='pressure', link_key='flowrate', node_labels=True, link_labels=False)
-#sim.plot_results('node','pressure')
-#sim.plot_results('link','flowrate')
-#sim.plot_results('node','demand')
-#sim.plot_network_over_time(node_key='pressure', link_key='flowrate', node_labels=True, link_labels=False)
+    #    sim.stop_leak('16')
 
 
 
 
-'''
+
+
+
+
+
+
+
+
     #if current_time == sim.hydraulic_timestep() * 50:
     #    sim.change_demand('H2', 3.0)
     

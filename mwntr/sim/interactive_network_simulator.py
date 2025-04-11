@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import time
 from uuid import uuid4
 from matplotlib import pyplot as plt
@@ -57,7 +58,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         return new_pattern
 
-    def init_simulation(self, solver=None, backup_solver=None, solver_options=None, backup_solver_options=None, convergence_error=False, HW_approx='default', diagnostics=False, global_timestep=None, duration=None):
+    def init_simulation(self, solver=None, backup_solver=None, solver_options=None, backup_solver_options=None, convergence_error=False, HW_approx='default', diagnostics=False, global_timestep=60, duration=86400):
         logger.debug('creating hydraulic model')
         self.mode = self._wn.options.hydraulic.demand_model
         self._model, self._model_updater = mwntr.sim.hydraulics.create_hydraulic_model(wn=self._wn, HW_approx=HW_approx)
@@ -1209,3 +1210,30 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         max_error = np.max(np.abs(conservation))
         print(f"Max imbalance at any node: {max_error}")
+
+
+    def dump_results_to_csv(self):
+        results = self.get_results()
+        nodes = self._wn.node_name_list
+        links = self._wn.link_name_list
+
+        # Create a directory for the results if it doesn't exist
+        os.makedirs(f"results/{self._sim_id}", exist_ok=True)
+
+        for key in results.node.keys():
+            results.node[key].to_csv(f"results/{self._sim_id}/{self._sim_id}_{key}_nodes.csv", index=True)
+        for key in results.link.keys():
+            results.link[key].to_csv(f"results/{self._sim_id}/{self._sim_id}_{key}_links.csv", index=True)
+        
+        header = True
+        for event in self.events_history:
+            time, action, args = event
+            args = str(args)
+            args = args.replace("(", '')
+            args = args.replace(")", '')
+            with open(f"results/{self._sim_id}/{self._sim_id}_events.csv", 'a') as f:
+                if header:
+                    f.write("time,action,args\n")
+                    header = False
+                
+                f.write(f"{time},{action},{args}\n")
