@@ -238,8 +238,12 @@ def main():
             else:
                 print("Simulation terminated before reaching the end time.")
 
-        except:
-            print("An error occurred during the simulation.")
+        except Exception as e:
+            if isinstance(e, KeyboardInterrupt):
+                print("Simulation interrupted by user.")
+                sys.exit()
+            else:
+                print("An error occurred during the simulation.")
             #for s in sims:
             #    s.dump_results_to_csv()
             #sys.exit()
