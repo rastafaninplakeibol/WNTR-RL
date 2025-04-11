@@ -122,7 +122,7 @@ class MWNTRInteractiveSimulator(mwntr.sim.WNTRSimulator):
 
         self.last_set_results_time = -1
         
-        self._wn.add_pattern('interactive_pattern', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1]))
+        #self._wn.add_pattern('interactive_pattern', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1]))
 
         self.rebuild_hydraulic_model = False
         self.demand_modifications = []
