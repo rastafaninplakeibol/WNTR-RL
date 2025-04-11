@@ -153,79 +153,89 @@ def main():
 
     #wn.get_node('R1').max_level = 600
 
-    sim = MWNTRInteractiveSimulator(wn)
 
+    i = 0
+    while i < 100:
+        wn.reset_initial_values()
+        sim = MWNTRInteractiveSimulator(wn)
 
-    #sys.exit()
+        #sys.exit()
 
-    sim.init_simulation(duration=one_day_in_seconds, global_timestep=global_timestep)
+        sim.init_simulation(duration=one_day_in_seconds, global_timestep=global_timestep)
 
-    branched_sim_1 = None
-    branched_sim_2 = None
+        branched_sim_1 = None
+        branched_sim_2 = None
 
-    start = time.time()
+        start = time.time()
 
-    #sim.plot_network()
-    sims = [sim]
+        #sim.plot_network()
+        sims = [sim]
 
-    has_active_leak = []
-    has_active_demand = []
-    closed_pipe = []
+        has_active_leak = []
+        has_active_demand = []
+        closed_pipe = []
 
-    wn.add_pattern('ptn_1', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,3,5,3,1], global_timestep, simulation_duration=one_day_in_seconds))
+        wn.add_pattern('ptn_1', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,3,5,3,1], global_timestep, simulation_duration=one_day_in_seconds))
 
-    node_list = wn.junction_name_list
-    link_list = wn.link_name_list
+        node_list = wn.junction_name_list
+        link_list = wn.link_name_list
 
-    while not sim.is_terminated():
-        #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
-        current_time = sim.get_sim_time()
+        while not sim.is_terminated():
+            #print(f"Current time: {current_time} {current_time / sim.hydraulic_timestep()}")
+            current_time = sim.get_sim_time()
 
-        r = random.random()
-        if r < 0.05:
-            r2 = random.random()
-            if r2 < 0.3:
-                if len(has_active_leak) == 0 or random.random() < 0.5:    
-                    node = random.choice(node_list)
-                    sim.start_leak(node, 0.1)
-                    has_active_leak.append(node)
+            r = random.random()
+            if r < 0.05:
+                r2 = random.random()
+                if r2 < 0.3:
+                    if len(has_active_leak) == 0 or random.random() < 0.5:    
+                        node = random.choice(node_list)
+                        sim.start_leak(node, 0.1)
+                        has_active_leak.append(node)
+                        print(f"Leak started on {node}")
+                    else:
+                        node = random.choice(has_active_leak)
+                        sim.stop_leak(node)
+                        has_active_leak.remove(node)
+                        print(f"Leak stopped on {node}")
+                elif r2 < 0.6:
+                    if len(has_active_demand) == 0 or random.random() < 0.5:    
+                        node = random.choice(node_list)
+                        sim.change_demand(node, 1, name='ptn_1')
+                        has_active_demand.append(node)
+                        print(f"Demand added on {node}")
+                    else:
+                        node = random.choice(has_active_demand)
+                        sim.change_demand(node)
+                        has_active_demand.remove(node)
+                        print(f"Demand removed on {node}")
                 else:
-                    node = random.choice(has_active_leak)
-                    sim.stop_leak(node)
-                    has_active_leak.remove(node)
-            elif r2 < 0.6:
-                if len(has_active_demand) == 0 or random.random() < 0.5:    
-                    node = random.choice(node_list)
-                    sim.change_demand(node, 1, name='ptn_1')
-                    has_active_demand.append(node)
-                else:
-                    node = random.choice(has_active_demand)
-                    sim.change_demand(node)
-                    has_active_demand.remove(node)
-            else:
-                if len(closed_pipe) == 0 or random.random() < 0.5:    
-                    link = random.choice(link_list)
-                    sim.close_pipe(link)
-                    closed_pipe.append(link)
-                else:
-                    link = random.choice(closed_pipe)
-                    sim.open_pipe(link)
-                    closed_pipe.remove(link)
-                
+                    if len(closed_pipe) == 0 or random.random() < 0.5:    
+                        link = random.choice(link_list)
+                        sim.close_pipe(link)
+                        closed_pipe.append(link)
+                        print(f"Pipe closed {link}")
+                    else:
+                        link = random.choice(closed_pipe)
+                        sim.open_pipe(link)
+                        closed_pipe.remove(link)
+                        print(f"Pipe opened {link}")
 
+            for s in sims:
+                s.step_sim()
+
+        end = time.time()
+        #print(f"Elapsed time: {end - start}")
+        
+        
+        if sim.get_sim_time() >= one_day_in_seconds:
+            sim.dump_results_to_csv()
+            i += 1
+            print(f"Simulation {i} completed in {end - start} seconds.")
+        else:
+            print("Simulation terminated before reaching the end time.")
     
 
-        for s in sims:
-            s.step_sim()
-
-    end = time.time()
-    print(f"Elapsed time: {end - start}")
-    
-    
-    if sim.get_sim_time() >= one_day_in_seconds:
-        sim.dump_results_to_csv()
-        return True
-    return False
 
     #sim.plot_network(link_labels=False, node_labels=True)
     #sim.plot_results('node','pressure')
@@ -239,11 +249,7 @@ def main():
     #sim.plot_network_over_time(node_key='pressure', link_key='flowrate', node_labels=True, link_labels=False)
 
 
-i = 0
-while i < 100:
-    ok = main()
-    if ok:
-        i += 1
+main()
 
 
 
