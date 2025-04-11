@@ -150,6 +150,7 @@ def main():
     #wn = create_water_network_model()
 
     wn.add_pattern('house1_pattern', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,5,1], global_timestep, simulation_duration=one_day_in_seconds))
+    wn.add_pattern('ptn_1', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,3,5,3,1], global_timestep, simulation_duration=one_day_in_seconds))
 
     #wn.get_node('R1').max_level = 600
 
@@ -175,7 +176,6 @@ def main():
         has_active_demand = []
         closed_pipe = []
 
-        wn.add_pattern('ptn_1', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,3,5,3,1], global_timestep, simulation_duration=one_day_in_seconds))
 
         node_list = wn.junction_name_list
         link_list = wn.link_name_list
