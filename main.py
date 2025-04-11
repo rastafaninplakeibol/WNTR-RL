@@ -1,16 +1,8 @@
-from calendar import c
 import random
 import sys
 import time
-from turtle import color
-from uuid import UUID
 import mwntr
-import matplotlib.pyplot as plt
-import mwntr.sim.interactive_network_simulator
-import mwntr.sim.results
-from mwntr.graphics.network import network_animation
 
-from mwntr.network.elements import Junction, Pipe, Reservoir, Valve
 from mwntr.sim.interactive_network_simulator import MWNTRInteractiveSimulator
 
 def create_water_network_model():
@@ -143,25 +135,27 @@ def main():
     global_timestep = 5
 
     #wn = mwntr.network.WaterNetworkModel('NET_2.inp')
-    wn = mwntr.network.WaterNetworkModel('NET_4.inp')
+    #wn = mwntr.network.WaterNetworkModel('NET_4.inp')
     #wn = mwntr.network.WaterNetworkModel('L-TOWN_Real.inp')
     #wn = mwntr.network.WaterNetworkModel("Modelli Belmonte Castel Sant'Angelo_2024-09-05_0850/Modello_Castel'Sant'Angelo/_Modelli idraulici/Pacchetto_CSA/CSA_Base.inp")
     #wn = mwntr.network.WaterNetworkModel("Modelli Belmonte Castel Sant'Angelo_2024-09-05_0850/Modello Belmonte/Modelli_MIKE/SDF/BELMONTE_DHIBase.inp")
     #wn = create_water_network_model()
 
-    wn.add_pattern('house1_pattern', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,5,1], global_timestep, simulation_duration=one_day_in_seconds))
-    wn.add_pattern('ptn_1', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,3,5,3,1], global_timestep, simulation_duration=one_day_in_seconds))
+    #wn.add_pattern('house1_pattern', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,5,1], global_timestep, simulation_duration=one_day_in_seconds))
+    #wn.add_pattern('ptn_1', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,3,5,3,1], global_timestep, simulation_duration=one_day_in_seconds))
 
     #wn.get_node('R1').max_level = 600
 
 
     i = 0
     while i < 100:
-        wn.reset_initial_values()
-        sim = MWNTRInteractiveSimulator(wn)
-
+        wn = mwntr.network.WaterNetworkModel('NET_4.inp')
+        #wn.reset_initial_values()
+        wn.add_pattern('house1_pattern', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,5,1], global_timestep, simulation_duration=one_day_in_seconds))
+        wn.add_pattern('ptn_1', MWNTRInteractiveSimulator.expand_pattern_to_simulation_duration([1,3,5,3,1], global_timestep, simulation_duration=one_day_in_seconds))
         #sys.exit()
 
+        sim = MWNTRInteractiveSimulator(wn)
         sim.init_simulation(duration=one_day_in_seconds, global_timestep=global_timestep)
 
         branched_sim_1 = None
