@@ -129,7 +129,6 @@ def create_new_water_model():
     return wn
 
 
-
 def main():
     one_day_in_seconds = 86400
     global_timestep = 5
@@ -256,8 +255,14 @@ def main():
     #sim.plot_network_over_time(node_key='pressure', link_key='flowrate', node_labels=True, link_labels=False)
 
 
-main()
+#main()
 
+wn = mwntr.network.WaterNetworkModel("Modelli Belmonte Castel Sant'Angelo_2024-09-05_0850/Modello_Castel'Sant'Angelo/_Modelli idraulici/Pacchetto_CSA/CSA_Base.inp")
+with open('nodes_coords_epanet.csv', 'w') as f:
+    f.write('Node,Latitude,Longitude\n')
+    for name, node in wn.nodes.items():
+        lat, lon = node.coordinates
+        f.write(f'{name},{lat},{lon}\n')
 
 
 '''
