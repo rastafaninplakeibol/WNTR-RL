@@ -157,8 +157,8 @@ def main():
         sim = MWNTRInteractiveSimulator(wn)
         sim.init_simulation(duration=one_day_in_seconds, global_timestep=global_timestep)
 
-        branched_sim_1 = None
-        branched_sim_2 = None
+        #branched_sim_1 = None
+        #branched_sim_2 = None
 
         start = time.time()
 
