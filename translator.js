@@ -97,4 +97,21 @@ let main = () => {
     writeFileSync('mapping.json', JSON.stringify(output))
 }
 
-main()
+let to_csv = () => {
+    let content = readFileSync('mapping.json', 'utf-8').toString()
+    let mapping = JSON.parse(content)
+
+    let csv = 'epanet_id,epanet_lat,epanet_lon,truth_lat,truth_lon,truth_name,truth_deveui,mid_lat,mid_lon\n'
+
+    for(let elem of mapping) {
+        let epanet_point = elem.epanet_point
+        let truth_point = elem.truth_point
+        let mid_point = elem.mid_point
+
+        csv += `${epanet_point.id},${epanet_point.lat},${epanet_point.lon},${truth_point.lat},${truth_point.lon},${truth_point.name},${truth_point.dev_eui},${mid_point.lat},${mid_point.lon}\n`
+    }
+
+    writeFileSync('mapping.csv', csv)
+}
+
+to_csv()

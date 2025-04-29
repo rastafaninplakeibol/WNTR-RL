@@ -871,6 +871,7 @@ class Pipe(Link):
         self._roughness = 100
         self._minor_loss = 0.0
         self._cv = False
+        self._cv = False
         self._bulk_coeff = None
         self._wall_coeff = None
         self._velocity = None
@@ -938,6 +939,14 @@ class Pipe(Link):
         return self._cv
     @cv.setter
     def cv(self, value): 
+        self._cv = value
+
+    @property
+    def check_valve(self):
+        """bool : does this pipe have a check valve"""
+        return self._cv
+    @cv.setter
+    def check_valve(self, value): 
         self._cv = value
         
     @property
